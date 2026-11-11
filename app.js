@@ -6,6 +6,7 @@ const ADMIN_PASS = "admin123";
 const LS_EMPLOYEES = "kitchen_employees_v2";
 const LS_LOG = "kitchen_log_v1";
 const LS_SESSION = "kitchen_session_v1";
+const LS_DEVICE_REGISTERED = "kitchen_device_registered_v1"; // Ключ для блокировки повторной регистрации
 const COOLDOWN_MS = 15000;
 
 /* ================= ХРАНИЛИЩЕ ================= */
@@ -54,9 +55,7 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 function fmtTime(d) {
-  return (
-    pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
-  );
+  return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
 }
 function fmtDate(d) {
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
@@ -64,22 +63,15 @@ function fmtDate(d) {
 function esc(s) {
   return String(s).replace(
     /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
   );
 }
 
 /* ================= НАВИГАЦИЯ ПО ВКЛАДКАМ ================= */
 function switchTab(id) {
-  document
-    .querySelectorAll(".tab")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
-  document
-    .querySelectorAll(".page")
-    .forEach((p) => p.classList.toggle("active", p.id === id));
-
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === id));
+  
   if (id === "scan" && !scanner) {
     startScanner();
   }
@@ -92,18 +84,23 @@ document.querySelectorAll(".tab").forEach((btn) => {
 
 /* ================= РЕГИСТРАЦИЯ ================= */
 document.getElementById("reg-btn").addEventListener("click", () => {
+  const msg = document.getElementById("auth-msg");
+
+  // Проверка: регистрировался ли кто-то с этого телефона ранее
+  if (localStorage.getItem(LS_DEVICE_REGISTERED)) {
+    msg.textContent = "⚠️ С этого устройства уже была выполнена регистрация. Доступен только вход.";
+    return;
+  }
+
   const name = document.getElementById("reg-name").value.trim();
   const p1 = document.getElementById("reg-pass").value;
   const p2 = document.getElementById("reg-pass2").value;
-  const msg = document.getElementById("auth-msg");
 
   if (name.length < 2) {
     msg.textContent = "⚠️ Введите имя и фамилию.";
     return;
   }
-  if (
-    loadEmployees().some((e) => e.name.toLowerCase() === name.toLowerCase())
-  ) {
+  if (loadEmployees().some((e) => e.name.toLowerCase() === name.toLowerCase())) {
     msg.textContent = "⚠️ Такой сотрудник уже зарегистрирован. Войдите.";
     return;
   }
@@ -119,10 +116,14 @@ document.getElementById("reg-btn").addEventListener("click", () => {
   const list = loadEmployees();
   list.push({ name, pass: p1, regDate: fmtDate(new Date()) });
   saveEmployees(list);
+
+  // Фиксируем, что на этом устройстве регистрация уже произведена
+  localStorage.setItem(LS_DEVICE_REGISTERED, "true");
+
   setSession(name);
   msg.textContent = "";
   ["reg-name", "reg-pass", "reg-pass2"].forEach(
-    (i) => (document.getElementById(i).value = ""),
+    (i) => (document.getElementById(i).value = "")
   );
   updateAuthUI();
 });
@@ -130,7 +131,7 @@ document.getElementById("reg-btn").addEventListener("click", () => {
 ["reg-name", "reg-pass", "reg-pass2"].forEach((id) =>
   document.getElementById(id).addEventListener("keydown", (e) => {
     if (e.key === "Enter") document.getElementById("reg-btn").click();
-  }),
+  })
 );
 
 /* ================= ВХОД / ВЫХОД ================= */
@@ -139,7 +140,7 @@ document.getElementById("login-btn").addEventListener("click", () => {
   const pass = document.getElementById("login-pass").value;
   const msg = document.getElementById("auth-msg");
   const emp = loadEmployees().find(
-    (e) => e.name.toLowerCase() === name.toLowerCase(),
+    (e) => e.name.toLowerCase() === name.toLowerCase()
   );
   if (!emp || emp.pass !== pass) {
     msg.textContent = "❌ Неверное имя или пароль.";
@@ -155,7 +156,7 @@ document.getElementById("login-btn").addEventListener("click", () => {
 ["login-name", "login-pass"].forEach((id) =>
   document.getElementById(id).addEventListener("keydown", (e) => {
     if (e.key === "Enter") document.getElementById("login-btn").click();
-  }),
+  })
 );
 
 document.getElementById("logout-btn").addEventListener("click", () => {
@@ -168,21 +169,31 @@ function updateAuthUI() {
   const user = currentUser();
   document.getElementById("auth-forms").classList.toggle("hidden", !!user);
   document.getElementById("logged-view").classList.toggle("hidden", !user);
+  
+  // Если на этом устройстве уже регистрировались, скрываем блок регистрации, оставляя только Вход
+  const isDeviceRegistered = localStorage.getItem(LS_DEVICE_REGISTERED);
+  const regContainer = document.querySelector("#auth-forms .form:last-of-type").previousElementSibling.nextElementSibling; // блок регистрации
+  // Найдём блок регистрации точнее через заголовки или элементы формы
+  const regHeaders = document.querySelectorAll("#auth-forms .card-title");
+  if (regHeaders.length > 1) {
+    // Вторым заголовком идет "Регистрация"
+    const regTitle = regHeaders[1];
+    const regFormBlock = regTitle.nextElementSibling;
+    const regSep = regTitle.previousElementSibling;
+
+    if (isDeviceRegistered && !user) {
+      regTitle.style.display = "none";
+      regFormBlock.style.display = "none";
+      if (regSep) regSep.style.display = "none";
+    }
+  }
 
   if (user) {
     document.getElementById("logged-name").innerHTML =
-      "👤 <b>" +
-      esc(user.name) +
-      "</b><br><span class='muted'>В системе с " +
-      user.regDate +
-      "</span>";
+      "👤 <b>" + esc(user.name) + "</b><br><span class='muted'>В системе с " + user.regDate + "</span>";
     document.getElementById("scan-user").innerHTML =
-      '<div class="avatar">' +
-      esc(user.name.trim()[0].toUpperCase()) +
-      "</div>" +
-      '<div><div class="who-name">' +
-      esc(user.name) +
-      "</div>" +
+      '<div class="avatar">' + esc(user.name.trim()[0].toUpperCase()) + "</div>" +
+      '<div><div class="who-name">' + esc(user.name) + "</div>" +
       '<div class="muted">Отметки будут записываться на ваш аккаунт</div></div>';
     document.getElementById("scan-user").style.display = "flex";
   } else {
@@ -234,11 +245,7 @@ function handleScan(text) {
     (type === "in"
       ? "👋 " + esc(user.name) + " — пришёл на работу"
       : "🚪 " + esc(user.name) + " — ушёл с работы") +
-      "<br><span class='muted'>" +
-      fmtTime(now) +
-      " · " +
-      fmtDate(now) +
-      "</span>",
+      "<br><span class='muted'>" + fmtTime(now) + " · " + fmtDate(now) + "</span>"
   );
 }
 
@@ -261,30 +268,26 @@ async function startScanner() {
     return;
   }
   if (scanner) return;
-
+  
   scanner = new Html5Qrcode("reader");
   try {
     await scanner.start(
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 220, height: 220 } },
       handleScan,
-      () => {},
+      () => {}
     );
     status.textContent = "📷 Камера работает. Наведите на QR у двери.";
   } catch (e) {
     scanner = null;
     status.textContent =
-      "⚠️ Камера недоступна: " +
-      e.message +
-      ". Сайт должен открываться по HTTPS или на localhost.";
+      "⚠️ Камера недоступна: " + e.message + ". Сайт должен открываться по HTTPS или на localhost.";
   }
 }
 
 /* ================= АДМИН: ЗАМОК ================= */
 let adminOpen = false;
-document
-  .getElementById("admin-unlock")
-  .addEventListener("click", tryAdminUnlock);
+document.getElementById("admin-unlock").addEventListener("click", tryAdminUnlock);
 document.getElementById("admin-pass").addEventListener("keydown", (e) => {
   if (e.key === "Enter") tryAdminUnlock();
 });
@@ -292,7 +295,7 @@ document.getElementById("admin-pass").addEventListener("keydown", (e) => {
 function tryAdminUnlock() {
   const msg = document.getElementById("admin-lock-msg");
   const inputPass = document.getElementById("admin-pass").value;
-
+  
   if (inputPass === ADMIN_PASS) {
     adminOpen = true;
     document.getElementById("admin-pass").value = "";
@@ -320,87 +323,61 @@ function renderTable() {
   const log = loadLog().filter((e) => !dateFilter || e.date === dateFilter);
 
   tbody.innerHTML = "";
-  document.getElementById("empty-msg").style.display = log.length
-    ? "none"
-    : "block";
+  document.getElementById("empty-msg").style.display = log.length ? "none" : "block";
 
-  log
-    .slice()
-    .reverse()
-    .forEach((e) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML =
-        "<td>" +
-        e.date +
-        "</td>" +
-        "<td>" +
-        e.time +
-        "</td>" +
-        "<td>" +
-        esc(e.name) +
-        "</td>" +
-        '<td><span class="badge ' +
-        e.type +
-        '">' +
-        (e.type === "in" ? "Вход" : "Выход") +
-        "</span></td>";
-      tbody.appendChild(tr);
-    });
+  log.slice().reverse().forEach((e) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>" + e.date + "</td>" +
+      "<td>" + e.time + "</td>" +
+      "<td>" + esc(e.name) + "</td>" +
+      '<td><span class="badge ' + e.type + '">' + (e.type === "in" ? "Вход" : "Выход") + "</span></td>";
+    tbody.appendChild(tr);
+  });
 }
 
 function renderEmployees() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#emp-table tbody");
   tbody.innerHTML = "";
-
+  
   const employees = loadEmployees();
   if (employees.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td colspan="3" class="muted" style="text-align:center;">Нет зарегистрированных сотрудников</td>';
+    tr.innerHTML = '<td colspan="3" class="muted" style="text-align:center;">Нет зарегистрированных сотрудников</td>';
     tbody.appendChild(tr);
     return;
   }
 
   employees.forEach((e, index) => {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" +
-      esc(e.name) +
-      "</td>" +
-      "<td>" +
-      (e.regDate || "—") +
-      "</td>" +
-      '<td><button class="btn danger sm del-emp-btn" data-index="' +
-      index +
-      '">Удалить</button></td>';
+    tr.innerHTML = 
+      "<td>" + esc(e.name) + "</td>" +
+      "<td>" + (e.regDate || "—") + "</td>" +
+      '<td><button class="btn danger sm del-emp-btn" data-index="' + index + '">Удалить</button></td>';
     tbody.appendChild(tr);
   });
 
-  // Навешиваем обработчики на кнопки удаления
   document.querySelectorAll(".del-emp-btn").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       const idx = event.target.dataset.index;
       const empList = loadEmployees();
       const targetEmp = empList[idx];
 
-      if (
-        confirm(
-          "Вы действительно хотите удалить сотрудника: " + targetEmp.name + "?",
-        )
-      ) {
-        // Если удаляемый пользователь сейчас залогинен, сбрасываем сессию
+      if (confirm("Вы действительно хотите удалить сотрудника: " + targetEmp.name + "?")) {
         const session = getSession();
         if (session && session.name === targetEmp.name) {
           clearSession();
           updateAuthUI();
         }
 
-        // Удаляем из массива и сохраняем
         empList.splice(idx, 1);
         saveEmployees(empList);
+        
+        // Примечание: если удалили сотрудника, можно по желанию сбросить блокировку устройства, 
+        // чтобы владелец этого телефона мог зарегистрировать нового сотрудника:
+        // localStorage.removeItem(LS_DEVICE_REGISTERED);
 
-        // Перерисовываем список
         renderEmployees();
       }
     });
@@ -415,16 +392,15 @@ document.getElementById("show-all").addEventListener("click", () => {
 
 document.getElementById("export-csv").addEventListener("click", () => {
   const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
+  loadLog().log = loadLog().forEach((e) =>
+    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"])
+  );
   loadLog().forEach((e) =>
-    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
+    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"])
   );
-  const csv =
-    "\uFEFF" +
-    rows.map((r) => r.map((c) => '"' + c + '"').join(";")).join("\n");
+  const csv = "\uFEFF" + rows.map((r) => r.map((c) => '"' + c + '"').join(";")).join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(
-    new Blob([csv], { type: "text/csv;charset=utf-8" }),
-  );
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   a.download = "kitchen-log.csv";
   a.click();
 });
@@ -452,10 +428,7 @@ function buildDoorQr() {
     btn.className = "btn ghost";
     btn.textContent = "🖨 Печать";
     item.appendChild(holder);
-    item.insertAdjacentHTML(
-      "beforeend",
-      '<div class="name">' + d.label + "</div>",
-    );
+    item.insertAdjacentHTML("beforeend", '<div class="name">' + d.label + "</div>");
     item.appendChild(btn);
     list.appendChild(item);
     if (typeof QRCode !== "undefined") {
@@ -464,14 +437,8 @@ function buildDoorQr() {
     btn.addEventListener("click", () => {
       const win = window.open("", "_blank");
       win.document.write(
-        "<html><head><title>" +
-          d.label +
-          '</title></head><body style="font-family:sans-serif;text-align:center;padding:40px">' +
-          "<h2>" +
-          d.label +
-          "</h2>" +
-          holder.innerHTML +
-          "</body></html>",
+        "<html><head><title>" + d.label + '</title></head><body style="font-family:sans-serif;text-align:center;padding:40px">' +
+        "<h2>" + d.label + "</h2>" + holder.innerHTML + "</body></html>"
       );
       win.document.close();
       win.print();
