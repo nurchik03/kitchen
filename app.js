@@ -19,7 +19,7 @@ const QR_EXIT = "KITCHEN_DOOR_OUT";
 const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
-const COOLDOWN_MS = 5000;
+const COOLDOWN_MS = 8000; // Увеличено до 8 секунд, чтобы человек успел отойти от сканера
 
 let employeesCache = [];
 let logsCache = [];
@@ -210,7 +210,7 @@ function updateAuthUI() {
   }
 }
 
-/* ================= СКАНИРОВАНИЕ С ПРОВЕРКОЙ СТАТУСА ================= */
+/* ================= СКАНИРОВАНИЕ С УЛУЧШЕННЫМ ИНТЕРФЕЙСОМ ================= */
 let lastScanTime = 0;
 
 async function handleScan(text) {
@@ -221,21 +221,18 @@ async function handleScan(text) {
   const isIn = code === QR_ENTRANCE;
   const isOut = code === QR_EXIT;
   if (!isIn && !isOut) {
-    showResult(false, "❌ Это не QR-код кухни. Сканируйте код на двери.");
+    showResult(false, "❌ Неверный QR-код", "Это не код двери кухни.");
     return;
   }
 
   const user = currentUser();
   if (!user) {
-    showResult(false, "❌ Сначала войдите в аккаунт.");
+    showResult(false, "❌ Ошибка", "Сначала войдите в аккаунт на этом устройстве.");
     return;
   }
 
   if (nowMs - lastScanTime < COOLDOWN_MS) {
-    showResult(
-      false,
-      "⏳ Пожалуйста, подождите перед следующим сканированием.",
-    );
+    // Тихо пропускаем повторные срабатывания камеры пока человек отходит
     return;
   }
 
@@ -243,22 +240,18 @@ async function handleScan(text) {
 
   // Ищем последнюю запись текущего сотрудника в кэше логов
   const userLogs = logsCache.filter((l) => l.name === user.name);
-  const lastUserLog = userLogs.length > 0 ? userLogs[0] : null;
+  const lastUserLog = userLogs.length > 0 ? userLogs[0] : null; 
   const currentStatus = lastUserLog ? lastUserLog.type : "out";
 
-  // Защита: нельзя войти дважды или выйти, не войдя
+  // Защита от повторного входа/выхода
   if (targetType === "in" && currentStatus === "in") {
-    showResult(
-      false,
-      "⚠️ Вы уже отмечены как вошедший! Сначала отсканируйте QR-код на выходе.",
-    );
+    showResult(false, "⚠️ Вы уже внутри!", "Вы уже отмечены как вошедший. Сначала отсканируйте выход.");
+    lastScanTime = nowMs;
     return;
   }
   if (targetType === "out" && currentStatus === "out") {
-    showResult(
-      false,
-      "⚠️ Вы ещё не вошли на кухню! Сначала отсканируйте QR-код на входе.",
-    );
+    showResult(false, "⚠️ Вы ещё не вошли!", "Сначала отсканируйте QR-код на входе.");
+    lastScanTime = nowMs;
     return;
   }
 
@@ -273,30 +266,34 @@ async function handleScan(text) {
       type: targetType,
     });
 
-    showResult(
-      true,
-      (targetType === "in"
-        ? "👋 " + esc(user.name) + " — успешно вошел на кухню"
-        : "🚪 " + esc(user.name) + " — успешно вышел с кухни") +
-        "<br><span class='muted'>" +
-        fmtTime(now) +
-        " · " +
-        fmtDate(now) +
-        "</span>",
-    );
+    // Четкое и крупное сообщение об успехе
+    if (targetType === "in") {
+      showResult(true, "🟢 ВХОД УСПЕШЕН!", `Добро пожаловать на кухню, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+    } else {
+      showResult(true, "🔴 ВЫХОД УСПЕШЕН!", `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+    }
+
   } catch (e) {
-    showResult(false, "❌ Ошибка сохранения: " + e.message);
+    showResult(false, "❌ Ошибка сохранения", e.message);
   }
 }
 
-function showResult(ok, html) {
+function showResult(ok, title, html) {
   const box = document.getElementById("result");
   box.classList.remove("hidden", "bad");
   if (!ok) box.classList.add("bad");
+  
   document.getElementById("result-icon").textContent = ok ? "✅" : "⚠️";
-  document.getElementById("result-text").innerHTML = html;
+  
+  // Крупный заголовок результата, чтобы пользователь сразу понял статус
+  document.getElementById("result-text").innerHTML = `
+    <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">${title}</div>
+    <div>${html}</div>
+  `;
+  
   clearTimeout(showResult._t);
-  showResult._t = setTimeout(() => box.classList.add("hidden"), 8000);
+  // Результат отображается 6 секунд, чтобы сотрудник успел прочитать
+  showResult._t = setTimeout(() => box.classList.add("hidden"), 6000);
 }
 
 /* ================= КАМЕРА ================= */
