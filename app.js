@@ -19,10 +19,12 @@ const QR_EXIT = "KITCHEN_DOOR_OUT";
 const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
-const COOLDOWN_MS = 8000; // Увеличено до 8 секунд, чтобы человек успел отойти от сканера
+const COOLDOWN_MS = 8000;
 
 let employeesCache = [];
 let logsCache = [];
+let announcementsCache = [];
+let weeklyChartInstance = null;
 
 /* ================= РАБОТА С СЕССИЕЙ ================= */
 function getSession() {
@@ -65,6 +67,35 @@ function esc(s) {
   );
 }
 
+/* ================= РАСЧЁТ ОТРАБОТАННЫХ ЧАСОВ ================= */
+function calculateEmployeeHours(empName, targetDateStr) {
+  const empLogs = logsCache
+    .filter((l) => l.name === empName && l.date === targetDateStr)
+    .sort((a, b) => a.ts - b.ts);
+
+  let totalMs = 0;
+  let lastInTs = null;
+
+  empLogs.forEach((log) => {
+    if (log.type === "in") {
+      lastInTs = log.ts;
+    } else if (log.type === "out" && lastInTs !== null) {
+      totalMs += log.ts - lastInTs;
+      lastInTs = null;
+    }
+  });
+
+  if (lastInTs !== null && targetDateStr === fmtDate(new Date())) {
+    totalMs += Date.now() - lastInTs;
+  }
+
+  const totalMinutes = Math.floor(totalMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return { hours, minutes, totalMs };
+}
+
 /* ================= СИНХРОНИЗАЦИЯ С ОБЛАКОМ (REALTIME) ================= */
 db.collection("employees").onSnapshot((snapshot) => {
   employeesCache = [];
@@ -83,6 +114,21 @@ db.collection("logs")
       logsCache.push({ id: doc.id, ...doc.data() });
     });
     renderTable();
+    renderEmployees();
+    updateAuthUI();
+    updateWeeklyChart();
+  });
+
+// Слушаем объявления в реальном времени
+db.collection("announcements")
+  .orderBy("ts", "desc")
+  .onSnapshot((snapshot) => {
+    announcementsCache = [];
+    snapshot.forEach((doc) => {
+      announcementsCache.push({ id: doc.id, ...doc.data() });
+    });
+    renderAnnouncements();
+    renderAdminAnnouncements();
   });
 
 /* ================= НАВИГАЦИЯ ПО ВКЛАДКАМ ================= */
@@ -146,12 +192,6 @@ document.getElementById("reg-btn").addEventListener("click", async () => {
   }
 });
 
-["reg-name", "reg-pass", "reg-pass2"].forEach((id) =>
-  document.getElementById(id).addEventListener("keydown", (e) => {
-    if (e.key === "Enter") document.getElementById("reg-btn").click();
-  }),
-);
-
 /* ================= ВХОД / ВЫХОД ================= */
 document.getElementById("login-btn").addEventListener("click", () => {
   const name = document.getElementById("login-name").value.trim();
@@ -172,18 +212,11 @@ document.getElementById("login-btn").addEventListener("click", () => {
   updateAuthUI();
 });
 
-["login-name", "login-pass"].forEach((id) =>
-  document.getElementById(id).addEventListener("keydown", (e) => {
-    if (e.key === "Enter") document.getElementById("login-btn").click();
-  }),
-);
-
 document.getElementById("logout-btn").addEventListener("click", () => {
   clearSession();
   updateAuthUI();
 });
 
-/* ================= СОСТОЯНИЕ АВТОРИЗАЦИИ ================= */
 function updateAuthUI() {
   const user = currentUser();
   document.getElementById("auth-forms").classList.toggle("hidden", !!user);
@@ -196,6 +229,7 @@ function updateAuthUI() {
       "</b><br><span class='muted'>В системе с " +
       user.regDate +
       "</span>";
+
     document.getElementById("scan-user").innerHTML =
       '<div class="avatar">' +
       esc(user.name.trim()[0].toUpperCase()) +
@@ -205,12 +239,29 @@ function updateAuthUI() {
       "</div>" +
       '<div class="muted">Отметки будут записываться на ваш аккаунт</div></div>';
     document.getElementById("scan-user").style.display = "flex";
+
+    const todayStr = fmtDate(new Date());
+    const userLogs = logsCache.filter((l) => l.name === user.name);
+    const lastLog = userLogs.length > 0 ? userLogs[0] : null;
+    const isInside = lastLog && lastLog.type === "in";
+
+    const statusEl = document.getElementById("user-current-status");
+    if (isInside) {
+      statusEl.innerHTML =
+        "<span style='color:#2e7d32;'>🟢 На кухне (внутри)</span>";
+    } else {
+      statusEl.innerHTML = "<span style='color:#ef6c00;'>🔴 Вне кухни</span>";
+    }
+
+    const timeData = calculateEmployeeHours(user.name, todayStr);
+    document.getElementById("user-today-hours").textContent =
+      `${timeData.hours} ч. ${timeData.minutes} мин.`;
   } else {
     document.getElementById("scan-user").style.display = "none";
   }
 }
 
-/* ================= СКАНИРОВАНИЕ С УЛУЧШЕННЫМ ИНТЕРФЕЙСОМ ================= */
+/* ================= СКАНИРОВАНИЕ ================= */
 let lastScanTime = 0;
 
 async function handleScan(text) {
@@ -227,30 +278,36 @@ async function handleScan(text) {
 
   const user = currentUser();
   if (!user) {
-    showResult(false, "❌ Ошибка", "Сначала войдите в аккаунт на этом устройстве.");
+    showResult(
+      false,
+      "❌ Ошибка",
+      "Сначала войдите в аккаунт на этом устройстве.",
+    );
     return;
   }
 
-  if (nowMs - lastScanTime < COOLDOWN_MS) {
-    // Тихо пропускаем повторные срабатывания камеры пока человек отходит
-    return;
-  }
+  if (nowMs - lastScanTime < COOLDOWN_MS) return;
 
   const targetType = isIn ? "in" : "out";
-
-  // Ищем последнюю запись текущего сотрудника в кэше логов
   const userLogs = logsCache.filter((l) => l.name === user.name);
-  const lastUserLog = userLogs.length > 0 ? userLogs[0] : null; 
+  const lastUserLog = userLogs.length > 0 ? userLogs[0] : null;
   const currentStatus = lastUserLog ? lastUserLog.type : "out";
 
-  // Защита от повторного входа/выхода
   if (targetType === "in" && currentStatus === "in") {
-    showResult(false, "⚠️ Вы уже внутри!", "Вы уже отмечены как вошедший. Сначала отсканируйте выход.");
+    showResult(
+      false,
+      "⚠️ Вы уже внутри!",
+      "Вы уже отмечены как вошедший. Сначала отсканируйте выход.",
+    );
     lastScanTime = nowMs;
     return;
   }
   if (targetType === "out" && currentStatus === "out") {
-    showResult(false, "⚠️ Вы ещё не вошли!", "Сначала отсканируйте QR-код на входе.");
+    showResult(
+      false,
+      "⚠️ Вы ещё не вошли!",
+      "Сначала отсканируйте QR-код на входе.",
+    );
     lastScanTime = nowMs;
     return;
   }
@@ -266,13 +323,19 @@ async function handleScan(text) {
       type: targetType,
     });
 
-    // Четкое и крупное сообщение об успехе
     if (targetType === "in") {
-      showResult(true, "🟢 ВХОД УСПЕШЕН!", `Добро пожаловать на кухню, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+      showResult(
+        true,
+        "🟢 ВХОД УСПЕШЕН!",
+        `Добро пожаловать на кухню, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
+      );
     } else {
-      showResult(true, "🔴 ВЫХОД УСПЕШЕН!", `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+      showResult(
+        true,
+        "🔴 ВЫХОД УСПЕШЕН!",
+        `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
+      );
     }
-
   } catch (e) {
     showResult(false, "❌ Ошибка сохранения", e.message);
   }
@@ -282,18 +345,16 @@ function showResult(ok, title, html) {
   const box = document.getElementById("result");
   box.classList.remove("hidden", "bad");
   if (!ok) box.classList.add("bad");
-  
+
   document.getElementById("result-icon").textContent = ok ? "✅" : "⚠️";
-  
-  // Крупный заголовок результата, чтобы пользователь сразу понял статус
   document.getElementById("result-text").innerHTML = `
     <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">${title}</div>
     <div>${html}</div>
   `;
-  
+
   clearTimeout(showResult._t);
-  // Результат отображается 6 секунд, чтобы сотрудник успел прочитать
-  showResult._t = setTimeout(() => box.classList.add("hidden"), 6000);
+  const displayTime = ok ? 10000 : 6000;
+  showResult._t = setTimeout(() => box.classList.add("hidden"), displayTime);
 }
 
 /* ================= КАМЕРА ================= */
@@ -317,10 +378,7 @@ async function startScanner() {
     status.textContent = "📷 Камера работает. Наведите на QR у двери.";
   } catch (e) {
     scanner = null;
-    status.textContent =
-      "⚠️ Камера недоступна: " +
-      e.message +
-      ". Сайт должен открываться по HTTPS или на localhost.";
+    status.textContent = "⚠️ Камера недоступна: " + e.message + ".";
   }
 }
 
@@ -345,6 +403,8 @@ function tryAdminUnlock() {
     msg.textContent = "";
     renderTable();
     renderEmployees();
+    renderAdminAnnouncements();
+    updateWeeklyChart();
   } else {
     msg.textContent = "❌ Неверный пароль.";
   }
@@ -356,7 +416,106 @@ document.getElementById("admin-lock-btn").addEventListener("click", () => {
   document.getElementById("admin-content").classList.add("hidden");
 });
 
-/* ================= АДМИН: ЖУРНАЛ ================= */
+/* ================= РАБОТА С ОБЪЯВЛЕНИЯМИ ================= */
+function renderAnnouncements() {
+  const container = document.getElementById("announcements-feed");
+  const noMsg = document.getElementById("no-announcements");
+
+  if (announcementsCache.length === 0) {
+    container.innerHTML =
+      '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
+    return;
+  }
+
+  let html = "";
+  announcementsCache.forEach((ann) => {
+    let imgHtml = ann.image
+      ? `<br><img src="${esc(ann.image)}" class="announcement-img" alt="Фото к объявлению">`
+      : "";
+    html += `
+      <div class="announcement-card">
+        <h3>${esc(ann.title)}</h3>
+        <div class="announcement-meta">📅 Опубликовано: ${ann.date} в ${ann.time}</div>
+        <div class="announcement-text">${esc(ann.text)}</div>
+        ${imgHtml}
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+}
+
+// Публикация объявления админом
+document
+  .getElementById("publish-ann-btn")
+  .addEventListener("click", async () => {
+    const title = document.getElementById("ann-title").value.trim();
+    const text = document.getElementById("ann-text").value.trim();
+    const image = document.getElementById("ann-image").value.trim();
+    const msg = document.getElementById("ann-publish-msg");
+
+    if (!title || !text) {
+      msg.textContent = "⚠️ Заполните заголовок и текст объявления!";
+      return;
+    }
+
+    const now = new Date();
+    try {
+      await db.collection("announcements").add({
+        title: title,
+        text: text,
+        image: image || "",
+        date: fmtDate(now),
+        time: fmtTime(now),
+        ts: now.getTime(),
+      });
+
+      document.getElementById("ann-title").value = "";
+      document.getElementById("ann-text").value = "";
+      document.getElementById("ann-image").value = "";
+      msg.textContent = "✅ Объявление успешно опубликовано для всех!";
+      setTimeout(() => (msg.textContent = ""), 4000);
+    } catch (e) {
+      msg.textContent = "❌ Ошибка публикации: " + e.message;
+    }
+  });
+
+function renderAdminAnnouncements() {
+  if (!adminOpen) return;
+  const tbody = document.querySelector("#admin-ann-table tbody");
+  const noMsg = document.getElementById("admin-no-ann");
+  tbody.innerHTML = "";
+
+  if (announcementsCache.length === 0) {
+    noMsg.style.display = "block";
+    return;
+  }
+  noMsg.style.display = "none";
+
+  announcementsCache.forEach((ann) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${ann.date} ${ann.time}</td>
+      <td><b>${esc(ann.title)}</b></td>
+      <td><button class="btn danger sm del-ann-btn" data-id="${ann.id}">Удалить</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.querySelectorAll(".del-ann-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.target.dataset.id;
+      if (confirm("Удалить это объявление?")) {
+        try {
+          await db.collection("announcements").doc(id).delete();
+        } catch (err) {
+          alert("Ошибка удаления: " + err.message);
+        }
+      }
+    });
+  });
+}
+
+/* ================= АДМИН: ЖУРНАЛ И СОТРУДНИКИ ================= */
 function renderTable() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#log-table tbody");
@@ -370,21 +529,7 @@ function renderTable() {
 
   log.forEach((e) => {
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" +
-      e.date +
-      "</td>" +
-      "<td>" +
-      e.time +
-      "</td>" +
-      "<td>" +
-      esc(e.name) +
-      "</td>" +
-      '<td><span class="badge ' +
-      e.type +
-      '">' +
-      (e.type === "in" ? "Вход" : "Выход") +
-      "</span></td>";
+    tr.innerHTML = `<td>${e.date}</td><td>${e.time}</td><td>${esc(e.name)}</td><td><span class="badge ${e.type}">${e.type === "in" ? "Вход" : "Выход"}</span></td>`;
     tbody.appendChild(tr);
   });
 }
@@ -395,27 +540,30 @@ function renderEmployees() {
   tbody.innerHTML = "";
 
   if (employeesCache.length === 0) {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td colspan="3" class="muted" style="text-align:center;">Нет зарегистрированных сотрудников</td>';
-    tbody.appendChild(tr);
+    tbody.innerHTML =
+      '<tr><td colspan="4" class="muted" style="text-align:center;">Нет зарегистрированных сотрудников</td></tr>';
     return;
   }
 
+  const todayStr = fmtDate(new Date());
+
   employeesCache.forEach((e) => {
+    const userLogs = logsCache.filter((l) => l.name === e.name);
+    const lastLog = userLogs.length > 0 ? userLogs[0] : null;
+    const isInside = lastLog && lastLog.type === "in";
+    const statusHtml = isInside
+      ? '<span class="badge in">Внутри</span>'
+      : '<span class="badge out">Вне кухни</span>';
+
+    const timeData = calculateEmployeeHours(e.name, todayStr);
+
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>" +
-      esc(e.name) +
-      "</td>" +
-      "<td>" +
-      (e.regDate || "—") +
-      "</td>" +
-      '<td><button class="btn danger sm del-emp-btn" data-id="' +
-      e.id +
-      '" data-name="' +
-      esc(e.name) +
-      '">Удалить</button></td>';
+    tr.innerHTML = `
+      <td><b>${esc(e.name)}</b></td>
+      <td>${statusHtml}</td>
+      <td><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
+      <td><button class="btn danger sm del-emp-btn" data-id="${e.id}" data-name="${esc(e.name)}">Удалить</button></td>
+    `;
     tbody.appendChild(tr);
   });
 
@@ -432,7 +580,6 @@ function renderEmployees() {
           clearSession();
           updateAuthUI();
         }
-
         try {
           await db.collection("employees").doc(id).delete();
         } catch (e) {
@@ -443,7 +590,60 @@ function renderEmployees() {
   });
 }
 
-document.getElementById("filter-date").addEventListener("change", renderTable);
+/* ================= ГРАФИК АКТИВНОСТИ (CHART.JS) ================= */
+function updateWeeklyChart() {
+  if (!adminOpen) return;
+  const ctx = document.getElementById("weeklyChart");
+  if (!ctx) return;
+
+  const labels = [];
+  const dataCounts = [];
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = fmtDate(d);
+    const labelFormatted = d.toLocaleDateString("ru-RU", {
+      day: "numeric",
+      month: "short",
+    });
+    labels.push(labelFormatted);
+
+    const count = logsCache.filter(
+      (l) => l.date === dateStr && l.type === "in",
+    ).length;
+    dataCounts.push(count);
+  }
+
+  if (weeklyChartInstance) {
+    weeklyChartInstance.data.labels = labels;
+    weeklyChartInstance.data.datasets[0].data = dataCounts;
+    weeklyChartInstance.update();
+  } else {
+    weeklyChartInstance = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "Входов на кухню за день",
+            data: dataCounts,
+            backgroundColor: "#4caf50",
+            borderRadius: 6,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+      },
+    });
+  }
+}
+
+document.getElementById("filter-date").value = fmtDate(new Date());
 document.getElementById("show-all").addEventListener("click", () => {
   document.getElementById("filter-date").value = "";
   renderTable();
@@ -470,9 +670,7 @@ document.getElementById("clear-data").addEventListener("click", async () => {
     try {
       const snapshot = await db.collection("logs").get();
       const batch = db.batch();
-      snapshot.docs.forEach((doc) => {
-        batch.delete(doc.ref);
-      });
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
       await batch.commit();
     } catch (e) {
       alert("Ошибка очистки: " + e.message);
@@ -523,6 +721,5 @@ function buildDoorQr() {
   });
 }
 
-/* ================= ИНИЦИАЛИЗАЦИЯ ================= */
 document.getElementById("filter-date").value = fmtDate(new Date());
 buildDoorQr();
