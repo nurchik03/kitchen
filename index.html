@@ -7,8 +7,10 @@
   <link rel="stylesheet" href="style.css">
   <base target="_blank">
   <!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- Chart.js для графиков -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <header class="top">
@@ -16,6 +18,7 @@
   <nav class="tabs" id="tabs">
     <button class="tab" data-tab="scan">📷 Сканер</button>
     <button class="tab active" data-tab="auth">🔑 Вход</button>
+    <button class="tab" data-tab="announcements">📢 Объявления <span id="ann-badge" class="ann-badge hidden">0</span></button>
     <button class="tab" data-tab="admin" id="admin-tab">📋 Админ-панель</button>
   </nav>
 </header>
@@ -61,8 +64,25 @@
     <div id="logged-view" class="hidden">
       <h2 class="card-title">Вы вошли ✅</h2>
       <p id="logged-name" style="font-size:18px"></p>
+      
+      <div class="user-stats-card" style="background: #f8f9fa; padding: 14px; border-radius: 8px; margin: 15px 0;">
+        <p>🕒 Статус: <b id="user-current-status">Определяем...</b></p>
+        <p style="margin-top: 6px;">⏱ Отработано сегодня: <b id="user-today-hours">0 ч. 0 мин.</b></p>
+      </div>
+
       <p class="muted" style="margin:6px 0 14px">Переходите на вкладку «📷 Сканер», чтобы отметиться.</p>
       <button id="logout-btn" class="btn danger">Выйти из аккаунта</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== РАЗДЕЛ ОБЪЯВЛЕНИЙ ДЛЯ ВСЕХ ===== -->
+<section id="announcements" class="page">
+  <div class="card">
+    <h2 class="card-title">📢 Доска объявлений</h2>
+    <p class="muted" style="margin-bottom: 16px;">Важные новости и сообщения от руководства.</p>
+    <div id="announcements-feed" style="display: flex; flex-direction: column; gap: 16px;">
+      <p class="muted" id="no-announcements">Загрузка объявлений...</p>
     </div>
   </div>
 </section>
@@ -80,6 +100,38 @@
   </div>
 
   <div id="admin-content" class="hidden">
+    <!-- Блок создания объявления -->
+    <div class="card" style="background: #fdfdfd; border: 2px dashed #4caf50;">
+      <h2 class="card-title">✍️ Опубликовать новое объявление</h2>
+      <div class="form" style="max-width: 100%;">
+        <input type="text" id="ann-title" placeholder="Заголовок объявления (напр. Изменение графика)" style="width: 100%;">
+        <textarea id="ann-text" placeholder="Текст объявления..." rows="4" style="padding: 11px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; resize: vertical; width: 100%;"></textarea>
+        <input type="text" id="ann-image" placeholder="Ссылка на фото (необязательно, например из Imgur или адрес картинки)" style="width: 100%;">
+        <button id="publish-ann-btn" class="btn" style="width: fit-content;">Опубликовать для всех</button>
+      </div>
+      <div id="ann-publish-msg" class="muted" style="margin-top: 8px;"></div>
+    </div>
+
+    <!-- Управление существующими объявлениями -->
+    <div class="card">
+      <h2 class="card-title">🗑️ Опубликованные объявления</h2>
+      <div class="table-wrap">
+        <table id="admin-ann-table">
+          <thead><tr><th>Дата</th><th>Заголовок</th><th>Действие</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="admin-no-ann" class="muted">Нет активных объявлений.</p>
+      </div>
+    </div>
+
+    <!-- График активности -->
+    <div class="card">
+      <h2 class="card-title">📊 График активности за неделю</h2>
+      <div style="position: relative; height: 220px; width: 100%;">
+        <canvas id="weeklyChart"></canvas>
+      </div>
+    </div>
+
     <div class="card">
       <div class="admin-toolbar">
         <label>Дата: <input type="date" id="filter-date"></label>
@@ -96,10 +148,10 @@
       </div>
 
       <details class="manual qr-gen">
-        <summary>👥 Список сотрудников</summary>
+        <summary>👥 Список сотрудников и отработанные часы</summary>
         <div class="table-wrap" style="margin-top:10px">
           <table id="emp-table">
-            <thead><tr><th>Имя</th><th>Зарегистрирован</th><th>Действие</th></tr></thead>
+            <thead><tr><th>Имя</th><th>Статус</th><th>Часы сегодня</th><th>Действие</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
