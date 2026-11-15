@@ -9,7 +9,6 @@ const firebaseConfig = {
   measurementId: "G-6PR2V1ZD1E",
 };
 
-// Инициализация Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
@@ -19,12 +18,14 @@ const QR_EXIT = "KITCHEN_DOOR_OUT";
 const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
+const SS_ADMIN = "kitchen_admin_open_v1";
 const COOLDOWN_MS = 8000;
 
 let employeesCache = [];
 let logsCache = [];
 let announcementsCache = [];
 let weeklyChartInstance = null;
+let adminOpen = sessionStorage.getItem(SS_ADMIN) === "true";
 
 /* ================= РАБОТА С СЕССИЕЙ ================= */
 function getSession() {
@@ -67,7 +68,7 @@ function esc(s) {
   );
 }
 
-/* ================= РАСЧЁТ ОТРАБОТАННЫХ ЧАСОВ ================= */
+/* ================= РАСЧЁТ ЧАСОВ ================= */
 function calculateEmployeeHours(empName, targetDateStr) {
   const empLogs = logsCache
     .filter((l) => l.name === empName && l.date === targetDateStr)
@@ -96,7 +97,7 @@ function calculateEmployeeHours(empName, targetDateStr) {
   return { hours, minutes, totalMs };
 }
 
-/* ================= СИНХРОНИЗАЦИЯ С ОБЛАКОМ (REALTIME) ================= */
+/* ================= СИНХРОНИЗАЦИЯ С ОБЛАКОМ ================= */
 db.collection("employees").onSnapshot((snapshot) => {
   employeesCache = [];
   snapshot.forEach((doc) => {
@@ -104,6 +105,7 @@ db.collection("employees").onSnapshot((snapshot) => {
   });
   renderEmployees();
   updateAuthUI();
+  updateAdminEmployeeSelects();
 });
 
 db.collection("logs")
@@ -117,9 +119,10 @@ db.collection("logs")
     renderEmployees();
     updateAuthUI();
     updateWeeklyChart();
+    renderUserHistory();
+    renderAdminUserHistory();
   });
 
-// Слушаем объявления в реальном времени
 db.collection("announcements")
   .orderBy("ts", "desc")
   .onSnapshot((snapshot) => {
@@ -129,10 +132,34 @@ db.collection("announcements")
     });
     renderAnnouncements();
     renderAdminAnnouncements();
+    updateAnnouncementsBadge();
   });
 
-/* ================= НАВИГАЦИЯ ПО ВКЛАДКАМ ================= */
+/* ================= НАВИГАЦИЯ ================= */
 function switchTab(id) {
+  if (id === "admin") {
+    document
+      .querySelectorAll(".tab")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === "admin"));
+    document
+      .querySelectorAll(".page")
+      .forEach((p) => p.classList.toggle("active", p.id === "admin"));
+
+    if (adminOpen) {
+      document.getElementById("admin-lock").classList.add("hidden");
+      document.getElementById("admin-content").classList.remove("hidden");
+      renderTable();
+      renderEmployees();
+      renderAdminAnnouncements();
+      updateWeeklyChart();
+      updateAdminEmployeeSelects();
+    } else {
+      document.getElementById("admin-lock").classList.remove("hidden");
+      document.getElementById("admin-content").classList.add("hidden");
+    }
+    return;
+  }
+
   document
     .querySelectorAll(".tab")
     .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
@@ -150,7 +177,28 @@ document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
-/* ================= РЕГИСТРАЦИЯ ================= */
+/* ================= СЕКРЕТНЫЙ ТРИГГЕР АДМИНКИ ================= */
+let secretClicks = 0;
+let secretTimer = null;
+
+document
+  .getElementById("secret-admin-trigger")
+  .addEventListener("click", () => {
+    secretClicks++;
+    clearTimeout(secretTimer);
+    secretTimer = setTimeout(() => {
+      secretClicks = 0;
+    }, 1000);
+
+    if (secretClicks >= 5) {
+      secretClicks = 0;
+      const adminTab = document.getElementById("admin-tab");
+      adminTab.classList.remove("hidden");
+      switchTab("admin");
+    }
+  });
+
+/* ================= АВТОРИЗАЦИЯ ================= */
 document.getElementById("reg-btn").addEventListener("click", async () => {
   const name = document.getElementById("reg-name").value.trim();
   const p1 = document.getElementById("reg-pass").value;
@@ -180,19 +228,18 @@ document.getElementById("reg-btn").addEventListener("click", async () => {
       pass: p1,
       regDate: fmtDate(new Date()),
     });
-
     setSession(name);
     msg.textContent = "";
     ["reg-name", "reg-pass", "reg-pass2"].forEach(
       (i) => (document.getElementById(i).value = ""),
     );
     updateAuthUI();
+    switchTab("scan");
   } catch (e) {
     msg.textContent = "❌ Ошибка регистрации: " + e.message;
   }
 });
 
-/* ================= ВХОД / ВЫХОД ================= */
 document.getElementById("login-btn").addEventListener("click", () => {
   const name = document.getElementById("login-name").value.trim();
   const pass = document.getElementById("login-pass").value;
@@ -210,11 +257,7 @@ document.getElementById("login-btn").addEventListener("click", () => {
   document.getElementById("login-name").value = "";
   document.getElementById("login-pass").value = "";
   updateAuthUI();
-});
-
-document.getElementById("logout-btn").addEventListener("click", () => {
-  clearSession();
-  updateAuthUI();
+  switchTab("scan");
 });
 
 function updateAuthUI() {
@@ -224,20 +267,11 @@ function updateAuthUI() {
 
   if (user) {
     document.getElementById("logged-name").innerHTML =
-      "👤 <b>" +
-      esc(user.name) +
-      "</b><br><span class='muted'>В системе с " +
-      user.regDate +
-      "</span>";
-
-    document.getElementById("scan-user").innerHTML =
-      '<div class="avatar">' +
-      esc(user.name.trim()[0].toUpperCase()) +
-      "</div>" +
-      '<div><div class="who-name">' +
-      esc(user.name) +
-      "</div>" +
-      '<div class="muted">Отметки будут записываться на ваш аккаунт</div></div>';
+      `👤 <b>${esc(user.name)}</b> <span class='muted'>(в системе с ${user.regDate})</span>`;
+    document.getElementById("scan-user").innerHTML = `
+      <div class="avatar">${esc(user.name.trim()[0].toUpperCase())}</div>
+      <div><div class="who-name">${esc(user.name)}</div><div class="muted">Аккаунт активен для сканирования</div></div>
+    `;
     document.getElementById("scan-user").style.display = "flex";
 
     const todayStr = fmtDate(new Date());
@@ -246,24 +280,46 @@ function updateAuthUI() {
     const isInside = lastLog && lastLog.type === "in";
 
     const statusEl = document.getElementById("user-current-status");
-    if (isInside) {
-      statusEl.innerHTML =
-        "<span style='color:#2e7d32;'>🟢 На кухне (внутри)</span>";
-    } else {
-      statusEl.innerHTML = "<span style='color:#ef6c00;'>🔴 Вне кухни</span>";
-    }
+    statusEl.innerHTML = isInside
+      ? "<span class='status-badge in'>🟢 На кухне</span>"
+      : "<span class='status-badge out'>🔴 Вне кухни</span>";
 
     const timeData = calculateEmployeeHours(user.name, todayStr);
     document.getElementById("user-today-hours").textContent =
       `${timeData.hours} ч. ${timeData.minutes} мин.`;
+
+    renderUserHistory();
   } else {
     document.getElementById("scan-user").style.display = "none";
   }
 }
 
+/* ================= ИСТОРИЯ ПОЛЬЗОВАТЕЛЯ В ПРОФИЛЕ ================= */
+function renderUserHistory() {
+  const user = currentUser();
+  const tbody = document.querySelector("#user-history-table tbody");
+  const noMsg = document.getElementById("user-no-history");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+  if (!user) return;
+
+  const userLogs = logsCache.filter((l) => l.name === user.name);
+  if (userLogs.length === 0) {
+    noMsg.style.display = "block";
+    return;
+  }
+  noMsg.style.display = "none";
+
+  userLogs.forEach((l) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${l.date}</td><td>${l.time}</td><td><span class="badge ${l.type}">${l.type === "in" ? "Вход" : "Выход"}</span></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
 /* ================= СКАНИРОВАНИЕ ================= */
 let lastScanTime = 0;
-
 async function handleScan(text) {
   const code = (text || "").trim();
   const now = new Date();
@@ -294,20 +350,12 @@ async function handleScan(text) {
   const currentStatus = lastUserLog ? lastUserLog.type : "out";
 
   if (targetType === "in" && currentStatus === "in") {
-    showResult(
-      false,
-      "⚠️ Вы уже внутри!",
-      "Вы уже отмечены как вошедший. Сначала отсканируйте выход.",
-    );
+    showResult(false, "⚠️ Вы уже внутри!", "Сначала отсканируйте код выхода.");
     lastScanTime = nowMs;
     return;
   }
   if (targetType === "out" && currentStatus === "out") {
-    showResult(
-      false,
-      "⚠️ Вы ещё не вошли!",
-      "Сначала отсканируйте QR-код на входе.",
-    );
+    showResult(false, "⚠️ Вы ещё не вошли!", "Сначала отсканируйте код входа.");
     lastScanTime = nowMs;
     return;
   }
@@ -327,7 +375,7 @@ async function handleScan(text) {
       showResult(
         true,
         "🟢 ВХОД УСПЕШЕН!",
-        `Добро пожаловать на кухню, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
+        `Добро пожаловать, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
       );
     } else {
       showResult(
@@ -353,8 +401,10 @@ function showResult(ok, title, html) {
   `;
 
   clearTimeout(showResult._t);
-  const displayTime = ok ? 10000 : 6000;
-  showResult._t = setTimeout(() => box.classList.add("hidden"), displayTime);
+  showResult._t = setTimeout(
+    () => box.classList.add("hidden"),
+    ok ? 8000 : 5000,
+  );
 }
 
 /* ================= КАМЕРА ================= */
@@ -362,7 +412,7 @@ let scanner = null;
 async function startScanner() {
   const status = document.getElementById("cam-status");
   if (typeof Html5Qrcode === "undefined") {
-    status.textContent = "⚠️ Не загрузился модуль камеры — проверьте интернет.";
+    status.textContent = "⚠️ Модуль камеры не загружен.";
     return;
   }
   if (scanner) return;
@@ -375,15 +425,14 @@ async function startScanner() {
       handleScan,
       () => {},
     );
-    status.textContent = "📷 Камера работает. Наведите на QR у двери.";
+    status.textContent = "📷 Камера активна. Наведите на QR-код.";
   } catch (e) {
     scanner = null;
-    status.textContent = "⚠️ Камера недоступна: " + e.message + ".";
+    status.textContent = "⚠️ Ошибка камеры: " + e.message;
   }
 }
 
-/* ================= АДМИН: ЗАМОК ================= */
-let adminOpen = false;
+/* ================= АДМИН-ПАНЕЛЬ ================= */
 document
   .getElementById("admin-unlock")
   .addEventListener("click", tryAdminUnlock);
@@ -397,6 +446,7 @@ function tryAdminUnlock() {
 
   if (inputPass === ADMIN_PASS) {
     adminOpen = true;
+    sessionStorage.setItem(SS_ADMIN, "true");
     document.getElementById("admin-pass").value = "";
     document.getElementById("admin-lock").classList.add("hidden");
     document.getElementById("admin-content").classList.remove("hidden");
@@ -405,6 +455,7 @@ function tryAdminUnlock() {
     renderEmployees();
     renderAdminAnnouncements();
     updateWeeklyChart();
+    updateAdminEmployeeSelects();
   } else {
     msg.textContent = "❌ Неверный пароль.";
   }
@@ -412,15 +463,22 @@ function tryAdminUnlock() {
 
 document.getElementById("admin-lock-btn").addEventListener("click", () => {
   adminOpen = false;
+  sessionStorage.removeItem(SS_ADMIN);
+  document.getElementById("admin-tab").classList.add("hidden");
   document.getElementById("admin-lock").classList.remove("hidden");
   document.getElementById("admin-content").classList.add("hidden");
+  switchTab("auth");
 });
 
-/* ================= РАБОТА С ОБЪЯВЛЕНИЯМИ ================= */
+if (adminOpen) {
+  document.getElementById("admin-tab").classList.remove("hidden");
+  document.getElementById("admin-lock").classList.add("hidden");
+  document.getElementById("admin-content").classList.remove("hidden");
+}
+
+/* ================= ОБЪЯВЛЕНИЯ ================= */
 function renderAnnouncements() {
   const container = document.getElementById("announcements-feed");
-  const noMsg = document.getElementById("no-announcements");
-
   if (announcementsCache.length === 0) {
     container.innerHTML =
       '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
@@ -430,7 +488,7 @@ function renderAnnouncements() {
   let html = "";
   announcementsCache.forEach((ann) => {
     let imgHtml = ann.image
-      ? `<br><img src="${esc(ann.image)}" class="announcement-img" alt="Фото к объявлению">`
+      ? `<img src="${esc(ann.image)}" class="announcement-img" alt="Фото">`
       : "";
     html += `
       <div class="announcement-card">
@@ -444,7 +502,16 @@ function renderAnnouncements() {
   container.innerHTML = html;
 }
 
-// Публикация объявления админом
+function updateAnnouncementsBadge() {
+  const badge = document.getElementById("ann-badge");
+  if (announcementsCache.length > 0) {
+    badge.textContent = announcementsCache.length;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
+}
+
 document
   .getElementById("publish-ann-btn")
   .addEventListener("click", async () => {
@@ -454,28 +521,27 @@ document
     const msg = document.getElementById("ann-publish-msg");
 
     if (!title || !text) {
-      msg.textContent = "⚠️ Заполните заголовок и текст объявления!";
+      msg.textContent = "⚠️ Заполните заголовок и текст!";
       return;
     }
 
     const now = new Date();
     try {
       await db.collection("announcements").add({
-        title: title,
-        text: text,
+        title,
+        text,
         image: image || "",
         date: fmtDate(now),
         time: fmtTime(now),
         ts: now.getTime(),
       });
-
       document.getElementById("ann-title").value = "";
       document.getElementById("ann-text").value = "";
       document.getElementById("ann-image").value = "";
-      msg.textContent = "✅ Объявление успешно опубликовано для всех!";
-      setTimeout(() => (msg.textContent = ""), 4000);
+      msg.textContent = "✅ Опубликовано!";
+      setTimeout(() => (msg.textContent = ""), 3000);
     } catch (e) {
-      msg.textContent = "❌ Ошибка публикации: " + e.message;
+      msg.textContent = "❌ Ошибка: " + e.message;
     }
   });
 
@@ -493,29 +559,21 @@ function renderAdminAnnouncements() {
 
   announcementsCache.forEach((ann) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${ann.date} ${ann.time}</td>
-      <td><b>${esc(ann.title)}</b></td>
-      <td><button class="btn danger sm del-ann-btn" data-id="${ann.id}">Удалить</button></td>
-    `;
+    tr.innerHTML = `<td>${ann.date}</td><td><b>${esc(ann.title)}</b></td><td><button class="btn danger sm del-ann-btn" data-id="${ann.id}">Удалить</button></td>`;
     tbody.appendChild(tr);
   });
 
   document.querySelectorAll(".del-ann-btn").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       const id = e.target.dataset.id;
-      if (confirm("Удалить это объявление?")) {
-        try {
-          await db.collection("announcements").doc(id).delete();
-        } catch (err) {
-          alert("Ошибка удаления: " + err.message);
-        }
+      if (confirm("Удалить объявление?")) {
+        await db.collection("announcements").doc(id).delete();
       }
     });
   });
 }
 
-/* ================= АДМИН: ЖУРНАЛ И СОТРУДНИКИ ================= */
+/* ================= ТАБЛИЦЫ И СТАТИСТИКА ================= */
 function renderTable() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#log-table tbody");
@@ -541,12 +599,11 @@ function renderEmployees() {
 
   if (employeesCache.length === 0) {
     tbody.innerHTML =
-      '<tr><td colspan="4" class="muted" style="text-align:center;">Нет зарегистрированных сотрудников</td></tr>';
+      '<tr><td colspan="4" class="muted" style="text-align:center;">Нет сотрудников</td></tr>';
     return;
   }
 
   const todayStr = fmtDate(new Date());
-
   employeesCache.forEach((e) => {
     const userLogs = logsCache.filter((l) => l.name === e.name);
     const lastLog = userLogs.length > 0 ? userLogs[0] : null;
@@ -554,7 +611,6 @@ function renderEmployees() {
     const statusHtml = isInside
       ? '<span class="badge in">Внутри</span>'
       : '<span class="badge out">Вне кухни</span>';
-
     const timeData = calculateEmployeeHours(e.name, todayStr);
 
     const tr = document.createElement("tr");
@@ -571,30 +627,164 @@ function renderEmployees() {
     btn.addEventListener("click", async (event) => {
       const id = event.target.dataset.id;
       const name = event.target.dataset.name;
-
-      if (
-        confirm("Вы действительно хотите удалить сотрудника: " + name + "?")
-      ) {
-        const session = getSession();
-        if (session && session.name === name) {
-          clearSession();
-          updateAuthUI();
-        }
-        try {
-          await db.collection("employees").doc(id).delete();
-        } catch (e) {
-          alert("Ошибка удаления: " + e.message);
-        }
+      if (confirm(`Удалить сотрудника ${name}?`)) {
+        await db.collection("employees").doc(id).delete();
       }
     });
   });
 }
 
-/* ================= ГРАФИК АКТИВНОСТИ (CHART.JS) ================= */
+/* ================= ОБНОВЛЕНИЕ ВСЕХ ВЫПАДАЮЩИХ СПИСКОВ СОТРУДНИКОВ ================= */
+function updateAdminEmployeeSelects() {
+  // Список для детального отчета
+  const selectUser = document.getElementById("admin-employee-select");
+  // Список для графика
+  const selectChart = document.getElementById("chart-employee-select");
+
+  if (selectUser) {
+    const currentVal = selectUser.value;
+    selectUser.innerHTML =
+      '<option value="">-- Выберите сотрудника --</option>';
+    employeesCache.forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.name;
+      opt.textContent = e.name;
+      if (e.name === currentVal) opt.selected = true;
+      selectUser.appendChild(opt);
+    });
+  }
+
+  if (selectChart) {
+    const currentVal = selectChart.value;
+    selectChart.innerHTML =
+      '<option value="all">Все сотрудники (общий)</option>';
+    employeesCache.forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.name;
+      opt.textContent = e.name;
+      if (e.name === currentVal) opt.selected = true;
+      selectChart.appendChild(opt);
+    });
+  }
+}
+
+function renderAdminUserHistory() {
+  if (!adminOpen) return;
+  const select = document.getElementById("admin-employee-select");
+  const tbody = document.querySelector("#admin-user-history-table tbody");
+  const noMsg = document.getElementById("admin-user-no-history");
+  if (!select || !tbody) return;
+
+  const selectedName = select.value;
+  tbody.innerHTML = "";
+
+  if (!selectedName) {
+    noMsg.style.display = "block";
+    noMsg.textContent =
+      "Выберите сотрудника из списка выше, чтобы увидеть его историю.";
+    return;
+  }
+
+  const userLogs = logsCache.filter((l) => l.name === selectedName);
+  if (userLogs.length === 0) {
+    noMsg.style.display = "block";
+    noMsg.textContent = `У сотрудника ${selectedName} пока нет записей о посещениях.`;
+    return;
+  }
+  noMsg.style.display = "none";
+
+  userLogs.forEach((l) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${l.date}</td><td>${l.time}</td><td><span class="badge ${l.type}">${l.type === "in" ? "Вход" : "Выход"}</span></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+document
+  .getElementById("admin-employee-select")
+  .addEventListener("change", renderAdminUserHistory);
+document
+  .getElementById("chart-employee-select")
+  .addEventListener("change", updateWeeklyChart);
+
+document.getElementById("export-user-csv").addEventListener("click", () => {
+  const select = document.getElementById("admin-employee-select");
+  const selectedName = select.value;
+  if (!selectedName) {
+    alert("Сначала выберите сотрудника из выпадающего списка!");
+    return;
+  }
+
+  const userLogs = logsCache.filter((l) => l.name === selectedName);
+  if (userLogs.length === 0) {
+    alert("У выбранного сотрудника нет записей для экспорта.");
+    return;
+  }
+
+  const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
+  userLogs.forEach((e) =>
+    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
+  );
+
+  const csv =
+    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
+  a.download = `report_${selectedName.replace(/\s+/g, "_")}.csv`;
+  a.click();
+});
+
+/* ================= ЭКСПОРТ ОБЩЕГО ЖУРНАЛА ================= */
+document.getElementById("export-csv").addEventListener("click", () => {
+  const period = document.getElementById("export-period").value;
+  const dateFilterInput = document.getElementById("filter-date").value;
+  const nowMs = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  let filteredLogs = logsCache;
+
+  if (period === "day") {
+    filteredLogs = logsCache.filter(
+      (e) => !dateFilterInput || e.date === dateFilterInput,
+    );
+  } else if (period === "week") {
+    const weekAgo = nowMs - 7 * dayMs;
+    filteredLogs = logsCache.filter((e) => e.ts >= weekAgo);
+  } else if (period === "month") {
+    const monthAgo = nowMs - 30 * dayMs;
+    filteredLogs = logsCache.filter((e) => e.ts >= monthAgo);
+  }
+
+  if (filteredLogs.length === 0) {
+    alert("За выбранный период нет записей для экспорта.");
+    return;
+  }
+
+  const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
+  filteredLogs.forEach((e) =>
+    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
+  );
+
+  const csv =
+    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
+  a.download = `kitchen-log-${period}.csv`;
+  a.click();
+});
+
+/* ================= ГРАФИК (CHART.JS) ================= */
 function updateWeeklyChart() {
   if (!adminOpen) return;
   const ctx = document.getElementById("weeklyChart");
   if (!ctx) return;
+
+  const chartSelect = document.getElementById("chart-employee-select");
+  const selectedEmp = chartSelect ? chartSelect.value : "all";
 
   const labels = [];
   const dataCounts = [];
@@ -603,20 +793,28 @@ function updateWeeklyChart() {
     const d = new Date();
     d.setDate(d.getDate() - i);
     const dateStr = fmtDate(d);
-    const labelFormatted = d.toLocaleDateString("ru-RU", {
-      day: "numeric",
-      month: "short",
-    });
-    labels.push(labelFormatted);
+    labels.push(
+      d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }),
+    );
 
-    const count = logsCache.filter(
-      (l) => l.date === dateStr && l.type === "in",
-    ).length;
-    dataCounts.push(count);
+    // Фильтрация входов по дню и (если выбран) по конкретному сотруднику
+    const dayInCount = logsCache.filter((l) => {
+      const matchDate = l.date === dateStr && l.type === "in";
+      if (selectedEmp === "all") return matchDate;
+      return matchDate && l.name === selectedEmp;
+    }).length;
+
+    dataCounts.push(dayInCount);
   }
+
+  const chartLabel =
+    selectedEmp === "all"
+      ? "Входов за день (все)"
+      : `Входов за день (${selectedEmp})`;
 
   if (weeklyChartInstance) {
     weeklyChartInstance.data.labels = labels;
+    weeklyChartInstance.data.datasets[0].label = chartLabel;
     weeklyChartInstance.data.datasets[0].data = dataCounts;
     weeklyChartInstance.update();
   } else {
@@ -626,10 +824,10 @@ function updateWeeklyChart() {
         labels: labels,
         datasets: [
           {
-            label: "Входов на кухню за день",
+            label: chartLabel,
             data: dataCounts,
-            backgroundColor: "#4caf50",
-            borderRadius: 6,
+            backgroundColor: "#4f46e5",
+            borderRadius: 8,
           },
         ],
       },
@@ -644,43 +842,25 @@ function updateWeeklyChart() {
 }
 
 document.getElementById("filter-date").value = fmtDate(new Date());
+document.getElementById("filter-date").addEventListener("change", renderTable);
 document.getElementById("show-all").addEventListener("click", () => {
   document.getElementById("filter-date").value = "";
   renderTable();
 });
 
-document.getElementById("export-csv").addEventListener("click", () => {
-  const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
-  logsCache.forEach((e) =>
-    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
-  );
-  const csv =
-    "\uFEFF" +
-    rows.map((r) => r.map((c) => '"' + c + '"').join(";")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(
-    new Blob([csv], { type: "text/csv;charset=utf-8" }),
-  );
-  a.download = "kitchen-log.csv";
-  a.click();
-});
-
 document.getElementById("clear-data").addEventListener("click", async () => {
-  if (confirm("Удалить ВСЕ записи посещений?")) {
-    try {
-      const snapshot = await db.collection("logs").get();
-      const batch = db.batch();
-      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-    } catch (e) {
-      alert("Ошибка очистки: " + e.message);
-    }
+  if (confirm("Удалить ВСЕ записи журнала посещений?")) {
+    const snapshot = await db.collection("logs").get();
+    const batch = db.batch();
+    snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
   }
 });
 
 /* ================= QR-КОДЫ ДВЕРЕЙ ================= */
 function buildDoorQr() {
   const list = document.getElementById("door-qr-list");
+  if (!list) return;
   list.innerHTML = "";
   const doors = [
     { label: "🟢 ВХОД на кухню", text: QR_ENTRANCE },
@@ -691,29 +871,20 @@ function buildDoorQr() {
     item.className = "qr-item";
     const holder = document.createElement("div");
     const btn = document.createElement("button");
-    btn.className = "btn ghost";
-    btn.textContent = "🖨 Печать";
+    btn.className = "btn ghost sm";
+    btn.textContent = "Печать";
     item.appendChild(holder);
-    item.insertAdjacentHTML(
-      "beforeend",
-      '<div class="name">' + d.label + "</div>",
-    );
+    item.insertAdjacentHTML("beforeend", `<div class="name">${d.label}</div>`);
     item.appendChild(btn);
     list.appendChild(item);
+
     if (typeof QRCode !== "undefined") {
-      new QRCode(holder, { text: d.text, width: 150, height: 150 });
+      new QRCode(holder, { text: d.text, width: 130, height: 130 });
     }
     btn.addEventListener("click", () => {
       const win = window.open("", "_blank");
       win.document.write(
-        "<html><head><title>" +
-          d.label +
-          '</title></head><body style="font-family:sans-serif;text-align:center;padding:40px">' +
-          "<h2>" +
-          d.label +
-          "</h2>" +
-          holder.innerHTML +
-          "</body></html>",
+        `<html><head><title>${d.label}</title></head><body style="text-align:center;padding:40px;font-family:sans-serif"><h2>${d.label}</h2>${holder.innerHTML}</body></html>`,
       );
       win.document.close();
       win.print();
@@ -721,5 +892,4 @@ function buildDoorQr() {
   });
 }
 
-document.getElementById("filter-date").value = fmtDate(new Date());
 buildDoorQr();
