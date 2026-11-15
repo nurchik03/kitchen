@@ -18,14 +18,14 @@ const QR_EXIT = "KITCHEN_DOOR_OUT";
 const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
-const SS_ADMIN = "kitchen_admin_open_v1";
+const LS_ADMIN = "kitchen_admin_open_v1"; // Используем localStorage для сохранения при закрытии вкладки
 const COOLDOWN_MS = 8000;
 
 let employeesCache = [];
 let logsCache = [];
 let announcementsCache = [];
 let weeklyChartInstance = null;
-let adminOpen = sessionStorage.getItem(SS_ADMIN) === "true";
+let adminOpen = localStorage.getItem(LS_ADMIN) === "true";
 
 /* ================= РАБОТА С СЕССИЕЙ ================= */
 function getSession() {
@@ -394,7 +394,7 @@ function tryAdminUnlock() {
 
   if (inputPass === ADMIN_PASS) {
     adminOpen = true;
-    sessionStorage.setItem(SS_ADMIN, "true");
+    localStorage.setItem(LS_ADMIN, "true"); // Сохраняем в localStorage
     document.getElementById("admin-pass").value = "";
     document.getElementById("admin-lock").classList.add("hidden");
     document.getElementById("admin-content").classList.remove("hidden");
@@ -414,7 +414,7 @@ function tryAdminUnlock() {
 
 document.getElementById("admin-lock-btn").addEventListener("click", () => {
   adminOpen = false;
-  sessionStorage.removeItem(SS_ADMIN);
+  localStorage.removeItem(LS_ADMIN); // Удаляем из localStorage при блокировке
   document.getElementById("admin-tab").classList.add("hidden");
   document.getElementById("admin-lock").classList.remove("hidden");
   document.getElementById("admin-content").classList.add("hidden");
@@ -805,7 +805,7 @@ if (adminOpen) {
   document.getElementById("admin-lock").classList.add("hidden");
   document.getElementById("admin-content").classList.remove("hidden");
   document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
-  switchTab("admin"); // Сохраняем админку активной при обновлении страницы
+  switchTab("admin");
 } else {
   switchTab("auth");
 }
