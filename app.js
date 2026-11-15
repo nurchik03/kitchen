@@ -450,6 +450,10 @@ function tryAdminUnlock() {
     document.getElementById("admin-pass").value = "";
     document.getElementById("admin-lock").classList.add("hidden");
     document.getElementById("admin-content").classList.remove("hidden");
+
+    // Скрываем сканер для админа
+    document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
+
     msg.textContent = "";
     renderTable();
     renderEmployees();
@@ -467,6 +471,10 @@ document.getElementById("admin-lock-btn").addEventListener("click", () => {
   document.getElementById("admin-tab").classList.add("hidden");
   document.getElementById("admin-lock").classList.remove("hidden");
   document.getElementById("admin-content").classList.add("hidden");
+
+  // Возвращаем сканер при выходе из админки
+  document.querySelector('.tab[data-tab="scan"]').classList.remove("hidden");
+
   switchTab("auth");
 });
 
@@ -474,6 +482,7 @@ if (adminOpen) {
   document.getElementById("admin-tab").classList.remove("hidden");
   document.getElementById("admin-lock").classList.add("hidden");
   document.getElementById("admin-content").classList.remove("hidden");
+  document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
 }
 
 /* ================= ОБЪЯВЛЕНИЯ ================= */
@@ -636,9 +645,7 @@ function renderEmployees() {
 
 /* ================= ОБНОВЛЕНИЕ ВСЕХ ВЫПАДАЮЩИХ СПИСКОВ СОТРУДНИКОВ ================= */
 function updateAdminEmployeeSelects() {
-  // Список для детального отчета
   const selectUser = document.getElementById("admin-employee-select");
-  // Список для графика
   const selectChart = document.getElementById("chart-employee-select");
 
   if (selectUser) {
@@ -797,7 +804,6 @@ function updateWeeklyChart() {
       d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }),
     );
 
-    // Фильтрация входов по дню и (если выбран) по конкретному сотруднику
     const dayInCount = logsCache.filter((l) => {
       const matchDate = l.date === dateStr && l.type === "in";
       if (selectedEmp === "all") return matchDate;
