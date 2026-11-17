@@ -18,14 +18,13 @@ const QR_EXIT = "KITCHEN_DOOR_OUT";
 const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
-const LS_ADMIN = "kitchen_admin_open_v1"; // Используем localStorage для сохранения при закрытии вкладки
+const SS_ADMIN = "kitchen_admin_open_v1";
 const COOLDOWN_MS = 8000;
 
 let employeesCache = [];
 let logsCache = [];
 let announcementsCache = [];
-let weeklyChartInstance = null;
-let adminOpen = localStorage.getItem(LS_ADMIN) === "true";
+let adminOpen = sessionStorage.getItem(SS_ADMIN) === "true";
 
 /* ================= РАБОТА С СЕССИЕЙ ================= */
 function getSession() {
@@ -51,7 +50,9 @@ function pad(n) {
   return String(n).padStart(2, "0");
 }
 function fmtTime(d) {
-  return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+  return (
+    pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
+  );
 }
 function fmtDate(d) {
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
@@ -59,7 +60,10 @@ function fmtDate(d) {
 function esc(s) {
   return String(s).replace(
     /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
   );
 }
 
@@ -99,6 +103,7 @@ db.collection("employees").onSnapshot((snapshot) => {
     employeesCache.push({ id: doc.id, ...doc.data() });
   });
   renderEmployees();
+  renderTable();
   updateAuthUI();
   updateAdminEmployeeSelects();
 });
@@ -113,7 +118,6 @@ db.collection("logs")
     renderTable();
     renderEmployees();
     updateAuthUI();
-    updateWeeklyChart();
     renderUserHistory();
     renderAdminUserHistory();
   });
@@ -132,22 +136,34 @@ db.collection("announcements")
 
 /* ================= НАВИГАЦИЯ ================= */
 function switchTab(id) {
-  document.querySelectorAll(".tab").forEach((b) => {
-    b.classList.toggle("active", b.dataset.tab === id);
-  });
-  document.querySelectorAll(".page").forEach((p) => {
-    p.classList.toggle("active", p.id === id);
-  });
+  if (id === "admin") {
+    document
+      .querySelectorAll(".tab")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === "admin"));
+    document
+      .querySelectorAll(".page")
+      .forEach((p) => p.classList.toggle("active", p.id === "admin"));
 
-  if (id === "admin" && adminOpen) {
-    document.getElementById("admin-lock").classList.add("hidden");
-    document.getElementById("admin-content").classList.remove("hidden");
-    renderTable();
-    renderEmployees();
-    renderAdminAnnouncements();
-    updateWeeklyChart();
-    updateAdminEmployeeSelects();
+    if (adminOpen) {
+      document.getElementById("admin-lock").classList.add("hidden");
+      document.getElementById("admin-content").classList.remove("hidden");
+      renderTable();
+      renderEmployees();
+      renderAdminAnnouncements();
+      updateAdminEmployeeSelects();
+    } else {
+      document.getElementById("admin-lock").classList.remove("hidden");
+      document.getElementById("admin-content").classList.add("hidden");
+    }
+    return;
   }
+
+  document
+    .querySelectorAll(".tab")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+  document
+    .querySelectorAll(".page")
+    .forEach((p) => p.classList.toggle("active", p.id === id));
 
   if (id === "scan" && !scanner) {
     startScanner();
@@ -163,20 +179,22 @@ document.querySelectorAll(".tab").forEach((btn) => {
 let secretClicks = 0;
 let secretTimer = null;
 
-document.getElementById("secret-admin-trigger").addEventListener("click", () => {
-  secretClicks++;
-  clearTimeout(secretTimer);
-  secretTimer = setTimeout(() => {
-    secretClicks = 0;
-  }, 1000);
+document
+  .getElementById("secret-admin-trigger")
+  .addEventListener("click", () => {
+    secretClicks++;
+    clearTimeout(secretTimer);
+    secretTimer = setTimeout(() => {
+      secretClicks = 0;
+    }, 1000);
 
-  if (secretClicks >= 5) {
-    secretClicks = 0;
-    const adminTab = document.getElementById("admin-tab");
-    adminTab.classList.remove("hidden");
-    switchTab("admin");
-  }
-});
+    if (secretClicks >= 5) {
+      secretClicks = 0;
+      const adminTab = document.getElementById("admin-tab");
+      adminTab.classList.remove("hidden");
+      switchTab("admin");
+    }
+  });
 
 /* ================= АВТОРИЗАЦИЯ ================= */
 document.getElementById("reg-btn").addEventListener("click", async () => {
@@ -185,13 +203,22 @@ document.getElementById("reg-btn").addEventListener("click", async () => {
   const p2 = document.getElementById("reg-pass2").value;
   const msg = document.getElementById("auth-msg");
 
-  if (name.length < 2) { msg.textContent = "⚠️ Введите имя и фамилию."; return; }
+  if (name.length < 2) {
+    msg.textContent = "⚠️ Введите имя и фамилию.";
+    return;
+  }
   if (employeesCache.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
     msg.textContent = "⚠️ Такой сотрудник уже зарегистрирован. Войдите.";
     return;
   }
-  if (p1.length < 4) { msg.textContent = "⚠️ Пароль минимум 4 символа."; return; }
-  if (p1 !== p2) { msg.textContent = "⚠️ Пароли не совпадают."; return; }
+  if (p1.length < 4) {
+    msg.textContent = "⚠️ Пароль минимум 4 символа.";
+    return;
+  }
+  if (p1 !== p2) {
+    msg.textContent = "⚠️ Пароли не совпадают.";
+    return;
+  }
 
   try {
     await db.collection("employees").add({
@@ -201,7 +228,9 @@ document.getElementById("reg-btn").addEventListener("click", async () => {
     });
     setSession(name);
     msg.textContent = "";
-    ["reg-name", "reg-pass", "reg-pass2"].forEach((i) => (document.getElementById(i).value = ""));
+    ["reg-name", "reg-pass", "reg-pass2"].forEach(
+      (i) => (document.getElementById(i).value = ""),
+    );
     updateAuthUI();
     switchTab("scan");
   } catch (e) {
@@ -214,7 +243,9 @@ document.getElementById("login-btn").addEventListener("click", () => {
   const pass = document.getElementById("login-pass").value;
   const msg = document.getElementById("auth-msg");
 
-  const emp = employeesCache.find((e) => e.name.toLowerCase() === name.toLowerCase());
+  const emp = employeesCache.find(
+    (e) => e.name.toLowerCase() === name.toLowerCase(),
+  );
   if (!emp || emp.pass !== pass) {
     msg.textContent = "❌ Неверное имя или пароль.";
     return;
@@ -233,7 +264,8 @@ function updateAuthUI() {
   document.getElementById("logged-view").classList.toggle("hidden", !user);
 
   if (user) {
-    document.getElementById("logged-name").innerHTML = `👤 <b>${esc(user.name)}</b> <span class='muted'>(в системе с ${user.regDate})</span>`;
+    document.getElementById("logged-name").innerHTML =
+      `👤 <b>${esc(user.name)}</b> <span class='muted'>(в системе с ${user.regDate})</span>`;
     document.getElementById("scan-user").innerHTML = `
       <div class="avatar">${esc(user.name.trim()[0].toUpperCase())}</div>
       <div><div class="who-name">${esc(user.name)}</div><div class="muted">Аккаунт активен для сканирования</div></div>
@@ -246,12 +278,13 @@ function updateAuthUI() {
     const isInside = lastLog && lastLog.type === "in";
 
     const statusEl = document.getElementById("user-current-status");
-    statusEl.innerHTML = isInside 
-      ? "<span class='status-badge in'>🟢 На кухне</span>" 
+    statusEl.innerHTML = isInside
+      ? "<span class='status-badge in'>🟢 На кухне</span>"
       : "<span class='status-badge out'>🔴 Вне кухни</span>";
 
     const timeData = calculateEmployeeHours(user.name, todayStr);
-    document.getElementById("user-today-hours").textContent = `${timeData.hours} ч. ${timeData.minutes} мин.`;
+    document.getElementById("user-today-hours").textContent =
+      `${timeData.hours} ч. ${timeData.minutes} мин.`;
 
     renderUserHistory();
   } else {
@@ -299,7 +332,11 @@ async function handleScan(text) {
 
   const user = currentUser();
   if (!user) {
-    showResult(false, "❌ Ошибка", "Сначала войдите в аккаунт на этом устройстве.");
+    showResult(
+      false,
+      "❌ Ошибка",
+      "Сначала войдите в аккаунт на этом устройстве.",
+    );
     return;
   }
 
@@ -333,9 +370,17 @@ async function handleScan(text) {
     });
 
     if (targetType === "in") {
-      showResult(true, "🟢 ВХОД УСПЕШЕН!", `Добро пожаловать, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+      showResult(
+        true,
+        "🟢 ВХОД УСПЕШЕН!",
+        `Добро пожаловать, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
+      );
     } else {
-      showResult(true, "🔴 ВЫХОД УСПЕШЕН!", `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`);
+      showResult(
+        true,
+        "🔴 ВЫХОД УСПЕШЕН!",
+        `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
+      );
     }
   } catch (e) {
     showResult(false, "❌ Ошибка сохранения", e.message);
@@ -354,7 +399,10 @@ function showResult(ok, title, html) {
   `;
 
   clearTimeout(showResult._t);
-  showResult._t = setTimeout(() => box.classList.add("hidden"), ok ? 8000 : 5000);
+  showResult._t = setTimeout(
+    () => box.classList.add("hidden"),
+    ok ? 8000 : 5000,
+  );
 }
 
 /* ================= КАМЕРА ================= */
@@ -383,7 +431,9 @@ async function startScanner() {
 }
 
 /* ================= АДМИН-ПАНЕЛЬ ================= */
-document.getElementById("admin-unlock").addEventListener("click", tryAdminUnlock);
+document
+  .getElementById("admin-unlock")
+  .addEventListener("click", tryAdminUnlock);
 document.getElementById("admin-pass").addEventListener("keydown", (e) => {
   if (e.key === "Enter") tryAdminUnlock();
 });
@@ -394,18 +444,18 @@ function tryAdminUnlock() {
 
   if (inputPass === ADMIN_PASS) {
     adminOpen = true;
-    localStorage.setItem(LS_ADMIN, "true"); // Сохраняем в localStorage
+    sessionStorage.setItem(SS_ADMIN, "true");
     document.getElementById("admin-pass").value = "";
     document.getElementById("admin-lock").classList.add("hidden");
     document.getElementById("admin-content").classList.remove("hidden");
-    
+
+    // Скрываем сканер для админа
     document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
 
     msg.textContent = "";
     renderTable();
     renderEmployees();
     renderAdminAnnouncements();
-    updateWeeklyChart();
     updateAdminEmployeeSelects();
   } else {
     msg.textContent = "❌ Неверный пароль.";
@@ -414,27 +464,38 @@ function tryAdminUnlock() {
 
 document.getElementById("admin-lock-btn").addEventListener("click", () => {
   adminOpen = false;
-  localStorage.removeItem(LS_ADMIN); // Удаляем из localStorage при блокировке
+  sessionStorage.removeItem(SS_ADMIN);
   document.getElementById("admin-tab").classList.add("hidden");
   document.getElementById("admin-lock").classList.remove("hidden");
   document.getElementById("admin-content").classList.add("hidden");
-  
+
+  // Возвращаем сканер при выходе из админки
   document.querySelector('.tab[data-tab="scan"]').classList.remove("hidden");
 
   switchTab("auth");
 });
 
+if (adminOpen) {
+  document.getElementById("admin-tab").classList.remove("hidden");
+  document.getElementById("admin-lock").classList.add("hidden");
+  document.getElementById("admin-content").classList.remove("hidden");
+  document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
+}
+
 /* ================= ОБЪЯВЛЕНИЯ ================= */
 function renderAnnouncements() {
   const container = document.getElementById("announcements-feed");
   if (announcementsCache.length === 0) {
-    container.innerHTML = '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
+    container.innerHTML =
+      '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
     return;
   }
 
   let html = "";
   announcementsCache.forEach((ann) => {
-    let imgHtml = ann.image ? `<img src="${esc(ann.image)}" class="announcement-img" alt="Фото">` : "";
+    let imgHtml = ann.image
+      ? `<img src="${esc(ann.image)}" class="announcement-img" alt="Фото">`
+      : "";
     html += `
       <div class="announcement-card">
         <h3>${esc(ann.title)}</h3>
@@ -457,34 +518,38 @@ function updateAnnouncementsBadge() {
   }
 }
 
-document.getElementById("publish-ann-btn").addEventListener("click", async () => {
-  const title = document.getElementById("ann-title").value.trim();
-  const text = document.getElementById("ann-text").value.trim();
-  const image = document.getElementById("ann-image").value.trim();
-  const msg = document.getElementById("ann-publish-msg");
+document
+  .getElementById("publish-ann-btn")
+  .addEventListener("click", async () => {
+    const title = document.getElementById("ann-title").value.trim();
+    const text = document.getElementById("ann-text").value.trim();
+    const image = document.getElementById("ann-image").value.trim();
+    const msg = document.getElementById("ann-publish-msg");
 
-  if (!title || !text) {
-    msg.textContent = "⚠️ Заполните заголовок и текст!";
-    return;
-  }
+    if (!title || !text) {
+      msg.textContent = "⚠️ Заполните заголовок и текст!";
+      return;
+    }
 
-  const now = new Date();
-  try {
-    await db.collection("announcements").add({
-      title, text, image: image || "",
-      date: fmtDate(now),
-      time: fmtTime(now),
-      ts: now.getTime()
-    });
-    document.getElementById("ann-title").value = "";
-    document.getElementById("ann-text").value = "";
-    document.getElementById("ann-image").value = "";
-    msg.textContent = "✅ Опубликовано!";
-    setTimeout(() => msg.textContent = "", 3000);
-  } catch (e) {
-    msg.textContent = "❌ Ошибка: " + e.message;
-  }
-});
+    const now = new Date();
+    try {
+      await db.collection("announcements").add({
+        title,
+        text,
+        image: image || "",
+        date: fmtDate(now),
+        time: fmtTime(now),
+        ts: now.getTime(),
+      });
+      document.getElementById("ann-title").value = "";
+      document.getElementById("ann-text").value = "";
+      document.getElementById("ann-image").value = "";
+      msg.textContent = "✅ Опубликовано!";
+      setTimeout(() => (msg.textContent = ""), 3000);
+    } catch (e) {
+      msg.textContent = "❌ Ошибка: " + e.message;
+    }
+  });
 
 function renderAdminAnnouncements() {
   if (!adminOpen) return;
@@ -519,25 +584,33 @@ function renderTable() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#log-table tbody");
   const dateFilter = document.getElementById("filter-date").value;
-  const log = logsCache.filter((e) => !dateFilter || e.date === dateFilter);
-
+  const rows = Attendance.buildRows(logsCache, employeesCache).filter(row => !dateFilter || row.date === dateFilter);
   tbody.innerHTML = "";
-  document.getElementById("empty-msg").style.display = log.length ? "none" : "block";
-
-  log.forEach((e) => {
+  document.getElementById("empty-msg").style.display = rows.length ? "none" : "block";
+  const lateCount = rows.filter(row => row.late > 0).length;
+  const earlyCount = rows.filter(row => row.early > 0).length;
+  document.getElementById("attendance-summary").innerHTML = '<span>Посещений <b>' + rows.length + '</b></span><span>С опозданием <b>' + lateCount + '</b></span><span>С ранним уходом <b>' + earlyCount + '</b></span>';
+  rows.forEach(row => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${e.date}</td><td>${e.time}</td><td>${esc(e.name)}</td><td><span class="badge ${e.type}">${e.type === "in" ? "Вход" : "Выход"}</span></td>`;
+    const notes = Attendance.notes(row).map(note => {
+      const tone = note.startsWith('Опоздал') ? 'late' : note.startsWith('Ранний') ? 'early' : note === 'По графику' ? 'ok' : 'neutral';
+      return '<span class="attendance-note ' + tone + '">' + esc(note) + '</span>';
+    }).join('');
+    const exit = row.exit ? esc(row.exit.time) + (row.exit.date !== row.date ? '<small class="next-day">' + esc(row.exit.date) + '</small>' : '') : '<span class="muted">—</span>';
+    tr.innerHTML = '<td class="attendance-date">' + esc(row.date) + '</td><td><b>' + esc(row.name) + '</b></td><td class="attendance-time">' + (row.entry ? esc(row.entry.time) : '—') + '</td><td class="attendance-time">' + exit + '</td><td><div class="attendance-notes">' + notes + '</div></td>';
     tbody.appendChild(tr);
   });
 }
 
 function renderEmployees() {
   if (!adminOpen) return;
+  document.getElementById("employee-count").textContent = employeesCache.length;
   const tbody = document.querySelector("#emp-table tbody");
   tbody.innerHTML = "";
 
   if (employeesCache.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted" style="text-align:center;">Нет сотрудников</td></tr>';
+    tbody.innerHTML =
+      '<tr><td colspan="5" class="muted" style="text-align:center;">Пока никто не зарегистрирован.</td></tr>';
     return;
   }
 
@@ -546,15 +619,19 @@ function renderEmployees() {
     const userLogs = logsCache.filter((l) => l.name === e.name);
     const lastLog = userLogs.length > 0 ? userLogs[0] : null;
     const isInside = lastLog && lastLog.type === "in";
-    const statusHtml = isInside ? '<span class="badge in">Внутри</span>' : '<span class="badge out">Вне кухни</span>';
+    const statusHtml = isInside
+      ? '<span class="badge in">Внутри</span>'
+      : '<span class="badge out">Вне кухни</span>';
     const timeData = calculateEmployeeHours(e.name, todayStr);
 
+    const schedule = Attendance.scheduleFor(e, todayStr);
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><b>${esc(e.name)}</b></td>
       <td>${statusHtml}</td>
       <td><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
-      <td><button class="btn danger sm del-emp-btn" data-id="${e.id}" data-name="${esc(e.name)}">Удалить</button></td>
+      <td><span class="employee-schedule">${schedule ? esc(schedule.start) + " — " + esc(schedule.end) : "Не задан"}</span></td>
+      <td><div class="employee-actions"><button class="btn primary sm schedule-btn" data-id="${esc(e.id)}">График</button><button class="btn danger sm del-emp-btn" data-id="${esc(e.id)}" data-name="${esc(e.name)}">Удалить</button></div></td>
     `;
     tbody.appendChild(tr);
   });
@@ -573,11 +650,11 @@ function renderEmployees() {
 /* ================= ОБНОВЛЕНИЕ ВСЕХ ВЫПАДАЮЩИХ СПИСКОВ СОТРУДНИКОВ ================= */
 function updateAdminEmployeeSelects() {
   const selectUser = document.getElementById("admin-employee-select");
-  const selectChart = document.getElementById("chart-employee-select");
 
   if (selectUser) {
     const currentVal = selectUser.value;
-    selectUser.innerHTML = '<option value="">-- Выберите сотрудника --</option>';
+    selectUser.innerHTML =
+      '<option value="">-- Выберите сотрудника --</option>';
     employeesCache.forEach((e) => {
       const opt = document.createElement("option");
       opt.value = e.name;
@@ -587,17 +664,6 @@ function updateAdminEmployeeSelects() {
     });
   }
 
-  if (selectChart) {
-    const currentVal = selectChart.value;
-    selectChart.innerHTML = '<option value="all">Все сотрудники (общий)</option>';
-    employeesCache.forEach((e) => {
-      const opt = document.createElement("option");
-      opt.value = e.name;
-      opt.textContent = e.name;
-      if (e.name === currentVal) opt.selected = true;
-      selectChart.appendChild(opt);
-    });
-  }
 }
 
 function renderAdminUserHistory() {
@@ -612,7 +678,8 @@ function renderAdminUserHistory() {
 
   if (!selectedName) {
     noMsg.style.display = "block";
-    noMsg.textContent = "Выберите сотрудника из списка выше, чтобы увидеть его историю.";
+    noMsg.textContent =
+      "Выберите сотрудника из списка выше, чтобы увидеть его историю.";
     return;
   }
 
@@ -631,8 +698,9 @@ function renderAdminUserHistory() {
   });
 }
 
-document.getElementById("admin-employee-select").addEventListener("change", renderAdminUserHistory);
-document.getElementById("chart-employee-select").addEventListener("change", updateWeeklyChart);
+document
+  .getElementById("admin-employee-select")
+  .addEventListener("change", renderAdminUserHistory);
 
 document.getElementById("export-user-csv").addEventListener("click", () => {
   const select = document.getElementById("admin-employee-select");
@@ -649,11 +717,16 @@ document.getElementById("export-user-csv").addEventListener("click", () => {
   }
 
   const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
-  userLogs.forEach((e) => rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]));
-  
-  const csv = "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
+  userLogs.forEach((e) =>
+    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
+  );
+
+  const csv =
+    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.href = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
   a.download = `report_${selectedName.replace(/\s+/g, "_")}.csv`;
   a.click();
 });
@@ -668,7 +741,9 @@ document.getElementById("export-csv").addEventListener("click", () => {
   let filteredLogs = logsCache;
 
   if (period === "day") {
-    filteredLogs = logsCache.filter((e) => !dateFilterInput || e.date === dateFilterInput);
+    filteredLogs = logsCache.filter(
+      (e) => !dateFilterInput || e.date === dateFilterInput,
+    );
   } else if (period === "week") {
     const weekAgo = nowMs - 7 * dayMs;
     filteredLogs = logsCache.filter((e) => e.ts >= weekAgo);
@@ -682,71 +757,21 @@ document.getElementById("export-csv").addEventListener("click", () => {
     return;
   }
 
-  const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
-  filteredLogs.forEach((e) => rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]));
+  const rows = [["Дата", "Сотрудник", "Время входа", "Время выхода", "Дата выхода", "Отметки"]];
+  const includedLogs = new Set(filteredLogs);
+  Attendance.buildRows(logsCache, employeesCache)
+    .filter(row => includedLogs.has(row.entry || row.exit))
+    .forEach(row => rows.push([row.date, row.name, row.entry?.time || "", row.exit?.time || "", row.exit?.date || "", Attendance.notes(row).join("; ")]));
 
-  const csv = "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
+  const csv =
+    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.href = URL.createObjectURL(
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
   a.download = `kitchen-log-${period}.csv`;
   a.click();
 });
-
-/* ================= ГРАФИК (CHART.JS) ================= */
-function updateWeeklyChart() {
-  if (!adminOpen) return;
-  const ctx = document.getElementById("weeklyChart");
-  if (!ctx) return;
-
-  const chartSelect = document.getElementById("chart-employee-select");
-  const selectedEmp = chartSelect ? chartSelect.value : "all";
-
-  const labels = [];
-  const dataCounts = [];
-
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dateStr = fmtDate(d);
-    labels.push(d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }));
-    
-    const dayInCount = logsCache.filter((l) => {
-      const matchDate = l.date === dateStr && l.type === "in";
-      if (selectedEmp === "all") return matchDate;
-      return matchDate && l.name === selectedEmp;
-    }).length;
-
-    dataCounts.push(dayInCount);
-  }
-
-  const chartLabel = selectedEmp === "all" ? "Входов за день (все)" : `Входов за день (${selectedEmp})`;
-
-  if (weeklyChartInstance) {
-    weeklyChartInstance.data.labels = labels;
-    weeklyChartInstance.data.datasets[0].label = chartLabel;
-    weeklyChartInstance.data.datasets[0].data = dataCounts;
-    weeklyChartInstance.update();
-  } else {
-    weeklyChartInstance = new Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: labels,
-        datasets: [{
-          label: chartLabel,
-          data: dataCounts,
-          backgroundColor: "#4f46e5",
-          borderRadius: 8,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
-      },
-    });
-  }
-}
 
 document.getElementById("filter-date").value = fmtDate(new Date());
 document.getElementById("filter-date").addEventListener("change", renderTable);
@@ -784,13 +809,15 @@ function buildDoorQr() {
     item.insertAdjacentHTML("beforeend", `<div class="name">${d.label}</div>`);
     item.appendChild(btn);
     list.appendChild(item);
-    
+
     if (typeof QRCode !== "undefined") {
       new QRCode(holder, { text: d.text, width: 130, height: 130 });
     }
     btn.addEventListener("click", () => {
       const win = window.open("", "_blank");
-      win.document.write(`<html><head><title>${d.label}</title></head><body style="text-align:center;padding:40px;font-family:sans-serif"><h2>${d.label}</h2>${holder.innerHTML}</body></html>`);
+      win.document.write(
+        `<html><head><title>${d.label}</title></head><body style="text-align:center;padding:40px;font-family:sans-serif"><h2>${d.label}</h2>${holder.innerHTML}</body></html>`,
+      );
       win.document.close();
       win.print();
     });
@@ -798,14 +825,3 @@ function buildDoorQr() {
 }
 
 buildDoorQr();
-
-/* ================= ИНИЦИАЛИЗАЦИЯ ПРИ ЗАГРУЗКЕ ================= */
-if (adminOpen) {
-  document.getElementById("admin-tab").classList.remove("hidden");
-  document.getElementById("admin-lock").classList.add("hidden");
-  document.getElementById("admin-content").classList.remove("hidden");
-  document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
-  switchTab("admin");
-} else {
-  switchTab("auth");
-}
