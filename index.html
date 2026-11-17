@@ -1,827 +1,264 @@
-/* ================= НАСТРОЙКА FIREBASE ================= */
-const firebaseConfig = {
-  apiKey: "AIzaSyBlQjEaTNs7dHjmzZphzU4TdqDoBOtXIJw",
-  authDomain: "kitchen-app-8ab79.firebaseapp.com",
-  projectId: "kitchen-app-8ab79",
-  storageBucket: "kitchen-app-8ab79.firebasestorage.app",
-  messagingSenderId: "610956700538",
-  appId: "1:610956700538:web:e356316c6ee5a9ca3c44c3",
-  measurementId: "G-6PR2V1ZD1E",
-};
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Кухня исакеева — Учёт посещений</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f46e5'/><text x='50' y='70' font-size='58' text-anchor='middle'>🍳</text></svg>">
+  <base target="_blank">
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
 
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+<header class="top">
+  <div class="header-container">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 3v6a3 3 0 0 0 6 0V3M8 3v18M19 21V3c-4 3-5 8 0 9"/></svg></span><div><h1 id="secret-admin-trigger">кухня исакеева</h1><span class="brand-caption">Пространство вашей команды</span></div></div>
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tab="scan">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10"/></svg>
+        Сканер
+      </button>
+      <button class="tab active" data-tab="auth">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Профиль
+      </button>
+      <button class="tab" data-tab="announcements">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Объявления <span id="ann-badge" class="ann-badge hidden">0</span>
+      </button>
+      <button class="tab hidden" data-tab="admin" id="admin-tab">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Админка
+      </button>
+    </nav>
+  </div>
+</header>
 
-/* ================= НАСТРОЙКИ ПРИЛОЖЕНИЯ ================= */
-const QR_ENTRANCE = "KITCHEN_DOOR_IN";
-const QR_EXIT = "KITCHEN_DOOR_OUT";
-const ADMIN_PASS = "admin123";
-
-const LS_SESSION = "kitchen_session_v1";
-const SS_ADMIN = "kitchen_admin_open_v1";
-const COOLDOWN_MS = 8000;
-
-let employeesCache = [];
-let logsCache = [];
-let announcementsCache = [];
-let adminOpen = sessionStorage.getItem(SS_ADMIN) === "true";
-
-/* ================= РАБОТА С СЕССИЕЙ ================= */
-function getSession() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_SESSION));
-  } catch {
-    return null;
-  }
-}
-function setSession(name) {
-  localStorage.setItem(LS_SESSION, JSON.stringify({ name }));
-}
-function clearSession() {
-  localStorage.removeItem(LS_SESSION);
-}
-function currentUser() {
-  const s = getSession();
-  return s ? employeesCache.find((e) => e.name === s.name) || null : null;
-}
-
-/* ================= УТИЛИТЫ ================= */
-function pad(n) {
-  return String(n).padStart(2, "0");
-}
-function fmtTime(d) {
-  return (
-    pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
-  );
-}
-function fmtDate(d) {
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-}
-function esc(s) {
-  return String(s).replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
-  );
-}
-
-/* ================= РАСЧЁТ ЧАСОВ ================= */
-function calculateEmployeeHours(empName, targetDateStr) {
-  const empLogs = logsCache
-    .filter((l) => l.name === empName && l.date === targetDateStr)
-    .sort((a, b) => a.ts - b.ts);
-
-  let totalMs = 0;
-  let lastInTs = null;
-
-  empLogs.forEach((log) => {
-    if (log.type === "in") {
-      lastInTs = log.ts;
-    } else if (log.type === "out" && lastInTs !== null) {
-      totalMs += log.ts - lastInTs;
-      lastInTs = null;
-    }
-  });
-
-  if (lastInTs !== null && targetDateStr === fmtDate(new Date())) {
-    totalMs += Date.now() - lastInTs;
-  }
-
-  const totalMinutes = Math.floor(totalMs / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  return { hours, minutes, totalMs };
-}
-
-/* ================= СИНХРОНИЗАЦИЯ С ОБЛАКОМ ================= */
-db.collection("employees").onSnapshot((snapshot) => {
-  employeesCache = [];
-  snapshot.forEach((doc) => {
-    employeesCache.push({ id: doc.id, ...doc.data() });
-  });
-  renderEmployees();
-  renderTable();
-  updateAuthUI();
-  updateAdminEmployeeSelects();
-});
-
-db.collection("logs")
-  .orderBy("ts", "desc")
-  .onSnapshot((snapshot) => {
-    logsCache = [];
-    snapshot.forEach((doc) => {
-      logsCache.push({ id: doc.id, ...doc.data() });
-    });
-    renderTable();
-    renderEmployees();
-    updateAuthUI();
-    renderUserHistory();
-    renderAdminUserHistory();
-  });
-
-db.collection("announcements")
-  .orderBy("ts", "desc")
-  .onSnapshot((snapshot) => {
-    announcementsCache = [];
-    snapshot.forEach((doc) => {
-      announcementsCache.push({ id: doc.id, ...doc.data() });
-    });
-    renderAnnouncements();
-    renderAdminAnnouncements();
-    updateAnnouncementsBadge();
-  });
-
-/* ================= НАВИГАЦИЯ ================= */
-function switchTab(id) {
-  if (id === "admin") {
-    document
-      .querySelectorAll(".tab")
-      .forEach((b) => b.classList.toggle("active", b.dataset.tab === "admin"));
-    document
-      .querySelectorAll(".page")
-      .forEach((p) => p.classList.toggle("active", p.id === "admin"));
-
-    if (adminOpen) {
-      document.getElementById("admin-lock").classList.add("hidden");
-      document.getElementById("admin-content").classList.remove("hidden");
-      renderTable();
-      renderEmployees();
-      renderAdminAnnouncements();
-      updateAdminEmployeeSelects();
-    } else {
-      document.getElementById("admin-lock").classList.remove("hidden");
-      document.getElementById("admin-content").classList.add("hidden");
-    }
-    return;
-  }
-
-  document
-    .querySelectorAll(".tab")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
-  document
-    .querySelectorAll(".page")
-    .forEach((p) => p.classList.toggle("active", p.id === id));
-
-  if (id === "scan" && !scanner) {
-    startScanner();
-  }
-  updateAuthUI();
-}
-
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-});
-
-/* ================= СЕКРЕТНЫЙ ТРИГГЕР АДМИНКИ ================= */
-let secretClicks = 0;
-let secretTimer = null;
-
-document
-  .getElementById("secret-admin-trigger")
-  .addEventListener("click", () => {
-    secretClicks++;
-    clearTimeout(secretTimer);
-    secretTimer = setTimeout(() => {
-      secretClicks = 0;
-    }, 1000);
-
-    if (secretClicks >= 5) {
-      secretClicks = 0;
-      const adminTab = document.getElementById("admin-tab");
-      adminTab.classList.remove("hidden");
-      switchTab("admin");
-    }
-  });
-
-/* ================= АВТОРИЗАЦИЯ ================= */
-document.getElementById("reg-btn").addEventListener("click", async () => {
-  const name = document.getElementById("reg-name").value.trim();
-  const p1 = document.getElementById("reg-pass").value;
-  const p2 = document.getElementById("reg-pass2").value;
-  const msg = document.getElementById("auth-msg");
-
-  if (name.length < 2) {
-    msg.textContent = "⚠️ Введите имя и фамилию.";
-    return;
-  }
-  if (employeesCache.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
-    msg.textContent = "⚠️ Такой сотрудник уже зарегистрирован. Войдите.";
-    return;
-  }
-  if (p1.length < 4) {
-    msg.textContent = "⚠️ Пароль минимум 4 символа.";
-    return;
-  }
-  if (p1 !== p2) {
-    msg.textContent = "⚠️ Пароли не совпадают.";
-    return;
-  }
-
-  try {
-    await db.collection("employees").add({
-      name: name,
-      pass: p1,
-      regDate: fmtDate(new Date()),
-    });
-    setSession(name);
-    msg.textContent = "";
-    ["reg-name", "reg-pass", "reg-pass2"].forEach(
-      (i) => (document.getElementById(i).value = ""),
-    );
-    updateAuthUI();
-    switchTab("scan");
-  } catch (e) {
-    msg.textContent = "❌ Ошибка регистрации: " + e.message;
-  }
-});
-
-document.getElementById("login-btn").addEventListener("click", () => {
-  const name = document.getElementById("login-name").value.trim();
-  const pass = document.getElementById("login-pass").value;
-  const msg = document.getElementById("auth-msg");
-
-  const emp = employeesCache.find(
-    (e) => e.name.toLowerCase() === name.toLowerCase(),
-  );
-  if (!emp || emp.pass !== pass) {
-    msg.textContent = "❌ Неверное имя или пароль.";
-    return;
-  }
-  setSession(emp.name);
-  msg.textContent = "";
-  document.getElementById("login-name").value = "";
-  document.getElementById("login-pass").value = "";
-  updateAuthUI();
-  switchTab("scan");
-});
-
-function updateAuthUI() {
-  const user = currentUser();
-  document.getElementById("auth-forms").classList.toggle("hidden", !!user);
-  document.getElementById("logged-view").classList.toggle("hidden", !user);
-
-  if (user) {
-    document.getElementById("logged-name").innerHTML =
-      `👤 <b>${esc(user.name)}</b> <span class='muted'>(в системе с ${user.regDate})</span>`;
-    document.getElementById("scan-user").innerHTML = `
-      <div class="avatar">${esc(user.name.trim()[0].toUpperCase())}</div>
-      <div><div class="who-name">${esc(user.name)}</div><div class="muted">Аккаунт активен для сканирования</div></div>
-    `;
-    document.getElementById("scan-user").style.display = "flex";
-
-    const todayStr = fmtDate(new Date());
-    const userLogs = logsCache.filter((l) => l.name === user.name);
-    const lastLog = userLogs.length > 0 ? userLogs[0] : null;
-    const isInside = lastLog && lastLog.type === "in";
-
-    const statusEl = document.getElementById("user-current-status");
-    statusEl.innerHTML = isInside
-      ? "<span class='status-badge in'>🟢 На кухне</span>"
-      : "<span class='status-badge out'>🔴 Вне кухни</span>";
-
-    const timeData = calculateEmployeeHours(user.name, todayStr);
-    document.getElementById("user-today-hours").textContent =
-      `${timeData.hours} ч. ${timeData.minutes} мин.`;
-
-    renderUserHistory();
-  } else {
-    document.getElementById("scan-user").style.display = "none";
-  }
-}
-
-/* ================= ИСТОРИЯ ПОЛЬЗОВАТЕЛЯ В ПРОФИЛЕ ================= */
-function renderUserHistory() {
-  const user = currentUser();
-  const tbody = document.querySelector("#user-history-table tbody");
-  const noMsg = document.getElementById("user-no-history");
-  if (!tbody) return;
-
-  tbody.innerHTML = "";
-  if (!user) return;
-
-  const userLogs = logsCache.filter((l) => l.name === user.name);
-  if (userLogs.length === 0) {
-    noMsg.style.display = "block";
-    return;
-  }
-  noMsg.style.display = "none";
-
-  userLogs.forEach((l) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${l.date}</td><td>${l.time}</td><td><span class="badge ${l.type}">${l.type === "in" ? "Вход" : "Выход"}</span></td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-/* ================= СКАНИРОВАНИЕ ================= */
-let lastScanTime = 0;
-async function handleScan(text) {
-  const code = (text || "").trim();
-  const now = new Date();
-  const nowMs = now.getTime();
-
-  const isIn = code === QR_ENTRANCE;
-  const isOut = code === QR_EXIT;
-  if (!isIn && !isOut) {
-    showResult(false, "❌ Неверный QR-код", "Это не код двери кухни.");
-    return;
-  }
-
-  const user = currentUser();
-  if (!user) {
-    showResult(
-      false,
-      "❌ Ошибка",
-      "Сначала войдите в аккаунт на этом устройстве.",
-    );
-    return;
-  }
-
-  if (nowMs - lastScanTime < COOLDOWN_MS) return;
-
-  const targetType = isIn ? "in" : "out";
-  const userLogs = logsCache.filter((l) => l.name === user.name);
-  const lastUserLog = userLogs.length > 0 ? userLogs[0] : null;
-  const currentStatus = lastUserLog ? lastUserLog.type : "out";
-
-  if (targetType === "in" && currentStatus === "in") {
-    showResult(false, "⚠️ Вы уже внутри!", "Сначала отсканируйте код выхода.");
-    lastScanTime = nowMs;
-    return;
-  }
-  if (targetType === "out" && currentStatus === "out") {
-    showResult(false, "⚠️ Вы ещё не вошли!", "Сначала отсканируйте код входа.");
-    lastScanTime = nowMs;
-    return;
-  }
-
-  lastScanTime = nowMs;
-
-  try {
-    await db.collection("logs").add({
-      ts: nowMs,
-      date: fmtDate(now),
-      time: fmtTime(now),
-      name: user.name,
-      type: targetType,
-    });
-
-    if (targetType === "in") {
-      showResult(
-        true,
-        "🟢 ВХОД УСПЕШЕН!",
-        `Добро пожаловать, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
-      );
-    } else {
-      showResult(
-        true,
-        "🔴 ВЫХОД УСПЕШЕН!",
-        `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
-      );
-    }
-  } catch (e) {
-    showResult(false, "❌ Ошибка сохранения", e.message);
-  }
-}
-
-function showResult(ok, title, html) {
-  const box = document.getElementById("result");
-  box.classList.remove("hidden", "bad");
-  if (!ok) box.classList.add("bad");
-
-  document.getElementById("result-icon").textContent = ok ? "✅" : "⚠️";
-  document.getElementById("result-text").innerHTML = `
-    <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">${title}</div>
-    <div>${html}</div>
-  `;
-
-  clearTimeout(showResult._t);
-  showResult._t = setTimeout(
-    () => box.classList.add("hidden"),
-    ok ? 8000 : 5000,
-  );
-}
-
-/* ================= КАМЕРА ================= */
-let scanner = null;
-async function startScanner() {
-  const status = document.getElementById("cam-status");
-  if (typeof Html5Qrcode === "undefined") {
-    status.textContent = "⚠️ Модуль камеры не загружен.";
-    return;
-  }
-  if (scanner) return;
-
-  scanner = new Html5Qrcode("reader");
-  try {
-    await scanner.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 220, height: 220 } },
-      handleScan,
-      () => {},
-    );
-    status.textContent = "📷 Камера активна. Наведите на QR-код.";
-  } catch (e) {
-    scanner = null;
-    status.textContent = "⚠️ Ошибка камеры: " + e.message;
-  }
-}
-
-/* ================= АДМИН-ПАНЕЛЬ ================= */
-document
-  .getElementById("admin-unlock")
-  .addEventListener("click", tryAdminUnlock);
-document.getElementById("admin-pass").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") tryAdminUnlock();
-});
-
-function tryAdminUnlock() {
-  const msg = document.getElementById("admin-lock-msg");
-  const inputPass = document.getElementById("admin-pass").value;
-
-  if (inputPass === ADMIN_PASS) {
-    adminOpen = true;
-    sessionStorage.setItem(SS_ADMIN, "true");
-    document.getElementById("admin-pass").value = "";
-    document.getElementById("admin-lock").classList.add("hidden");
-    document.getElementById("admin-content").classList.remove("hidden");
-
-    // Скрываем сканер для админа
-    document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
-
-    msg.textContent = "";
-    renderTable();
-    renderEmployees();
-    renderAdminAnnouncements();
-    updateAdminEmployeeSelects();
-  } else {
-    msg.textContent = "❌ Неверный пароль.";
-  }
-}
-
-document.getElementById("admin-lock-btn").addEventListener("click", () => {
-  adminOpen = false;
-  sessionStorage.removeItem(SS_ADMIN);
-  document.getElementById("admin-tab").classList.add("hidden");
-  document.getElementById("admin-lock").classList.remove("hidden");
-  document.getElementById("admin-content").classList.add("hidden");
-
-  // Возвращаем сканер при выходе из админки
-  document.querySelector('.tab[data-tab="scan"]').classList.remove("hidden");
-
-  switchTab("auth");
-});
-
-if (adminOpen) {
-  document.getElementById("admin-tab").classList.remove("hidden");
-  document.getElementById("admin-lock").classList.add("hidden");
-  document.getElementById("admin-content").classList.remove("hidden");
-  document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
-}
-
-/* ================= ОБЪЯВЛЕНИЯ ================= */
-function renderAnnouncements() {
-  const container = document.getElementById("announcements-feed");
-  if (announcementsCache.length === 0) {
-    container.innerHTML =
-      '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
-    return;
-  }
-
-  let html = "";
-  announcementsCache.forEach((ann) => {
-    let imgHtml = ann.image
-      ? `<img src="${esc(ann.image)}" class="announcement-img" alt="Фото">`
-      : "";
-    html += `
-      <div class="announcement-card">
-        <h3>${esc(ann.title)}</h3>
-        <div class="announcement-meta">📅 Опубликовано: ${ann.date} в ${ann.time}</div>
-        <div class="announcement-text">${esc(ann.text)}</div>
-        ${imgHtml}
+<main class="main-content">
+  <div class="workspace-heading"><div><p class="eyebrow">КОМАНДА. ВРЕМЯ. ПОРЯДОК.</p><h2>Всё под контролем<span>.</span></h2><p class="workspace-description">Посещения, рабочее время и новости команды — в одном месте.</p></div><span class="workspace-tag"><span></span> Учёт посещений</span></div>
+  <!-- ===== СКАНЕР ===== -->
+  <section id="scan" class="page">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Отметка через QR-код</h2>
+        <p class="muted">Наведите камеру смартфона на код у двери</p>
       </div>
-    `;
-  });
-  container.innerHTML = html;
-}
+      <div id="scan-user" class="scan-user" style="display:none;"></div>
+      <div id="reader" class="reader"></div>
+      <div id="result" class="result hidden">
+        <div id="result-icon">✅</div>
+        <div id="result-text"></div>
+      </div>
+      <div id="cam-status" class="muted last-scan"></div>
+    </div>
+  </section>
 
-function updateAnnouncementsBadge() {
-  const badge = document.getElementById("ann-badge");
-  if (announcementsCache.length > 0) {
-    badge.textContent = announcementsCache.length;
-    badge.classList.remove("hidden");
-  } else {
-    badge.classList.add("hidden");
-  }
-}
+  <!-- ===== ВХОД / РЕГИСТРАЦИЯ ===== -->
+  <section id="auth" class="page active">
+    <div class="card profile-card">
+      <div id="auth-forms" class="auth-layout">
+        <aside class="auth-story"><span class="story-kicker">ВАШ РАБОЧИЙ РИТМ</span><h2>Хороший день<br>начинается<br>с простого.</h2><p>Войдите в профиль, отсканируйте код у двери — и вы готовы к работе.</p><div class="scan-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-ticket"><span class="ticket-mark">KT / CHECK-IN</span><svg viewBox="0 0 100 100" fill="currentColor"><path fill-rule="evenodd" d="M5 5h30v30H5V5zm6 6v18h18V11H11zm54-6h30v30H65V5zm6 6v18h18V11H71zM5 65h30v30H5V65zm6 6v18h18V71H11z"/><path d="M16 16h8v8h-8zM76 16h8v8h-8zM16 76h8v8h-8zM43 5h10v15H43zM43 28h10v16H43zM5 43h18v10H5zM30 43h14v18H30zM52 45h16v10H52zM76 42h19v11H76zM44 67h10v28H44zM61 61h13v13H61zM82 63h13v22H82zM61 83h12v12H61zM83 91h12v4H83z"/></svg><span class="ticket-caption">Наведите. Отметьтесь. Готово.</span></div><span class="art-check">✓</span></div><div class="story-bottom"><span class="story-dot"></span> Меньше рутины. Больше времени на главное.</div></aside>
+        <div class="auth-panel"><p class="eyebrow">ЛИЧНЫЙ КАБИНЕТ</p><div class="auth-switch" aria-label="Вход или регистрация"><button type="button" class="auth-switch-btn selected" data-auth-mode="login" aria-pressed="true" aria-controls="login-panel">Вход</button><button type="button" class="auth-switch-btn" data-auth-mode="register" aria-pressed="false" aria-controls="register-panel">Регистрация</button></div>
+        <div class="auth-grid">
+          <div class="auth-column" id="login-panel">
+            <h2 class="card-title">С возвращением!</h2><p class="auth-description">Войдите, чтобы начать рабочий день.</p>
+            <div class="form">
+              <div class="input-group">
+                <label for="login-name">Ваше имя</label><input type="text" id="login-name" placeholder="Ваше имя" autocomplete="username">
+              </div>
+              <div class="input-group">
+                <label for="login-pass">Пароль</label><input type="password" id="login-pass" placeholder="Пароль" autocomplete="current-password">
+              </div>
+              <button id="login-btn" class="btn primary">Войти в профиль <span aria-hidden="true">↗</span></button>
+            </div>
+          </div>
+          
+          <div class="divider"></div>
 
-document
-  .getElementById("publish-ann-btn")
-  .addEventListener("click", async () => {
-    const title = document.getElementById("ann-title").value.trim();
-    const text = document.getElementById("ann-text").value.trim();
-    const image = document.getElementById("ann-image").value.trim();
-    const msg = document.getElementById("ann-publish-msg");
+          <div class="auth-column hidden" id="register-panel">
+            <h2 class="card-title">Давайте знакомиться</h2><p class="auth-description">Создайте профиль для учёта посещений.</p>
+            <div class="form">
+              <div class="input-group">
+                <label for="reg-name">Имя и фамилия</label><input type="text" id="reg-name" placeholder="Имя и Фамилия" autocomplete="name">
+              </div>
+              <div class="input-group">
+                <label for="reg-pass">Пароль</label><input type="password" id="reg-pass" placeholder="Пароль (от 4 символов)" autocomplete="new-password">
+              </div>
+              <div class="input-group">
+                <label for="reg-pass2">Повторите пароль</label><input type="password" id="reg-pass2" placeholder="Повторите пароль" autocomplete="new-password">
+              </div>
+              <button id="reg-btn" class="btn ghost">Зарегистрироваться</button>
+            </div>
+          </div>
+        </div>
+        <div id="auth-msg" class="last-scan" role="status" aria-live="polite"></div><p class="auth-footnote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Используйте свой профиль на этом устройстве</p></div>
+      </div>
 
-    if (!title || !text) {
-      msg.textContent = "⚠️ Заполните заголовок и текст!";
-      return;
-    }
+      <div id="logged-view" class="hidden">
+        <div class="welcome-box">
+          <h2 class="card-title">Личный кабинет 👋</h2>
+          <p id="logged-name" style="font-size:16px; margin-top: 4px;"></p>
+          
+          <div class="user-stats-card">
+            <div class="stat-item">
+              <span class="stat-label">Текущий статус</span>
+              <span id="user-current-status" class="stat-val">Определяем...</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Отработано сегодня</span>
+              <span id="user-today-hours" class="stat-val">0 ч. 0 мин.</span>
+            </div>
+          </div>
 
-    const now = new Date();
-    try {
-      await db.collection("announcements").add({
-        title,
-        text,
-        image: image || "",
-        date: fmtDate(now),
-        time: fmtTime(now),
-        ts: now.getTime(),
-      });
-      document.getElementById("ann-title").value = "";
-      document.getElementById("ann-text").value = "";
-      document.getElementById("ann-image").value = "";
-      msg.textContent = "✅ Опубликовано!";
-      setTimeout(() => (msg.textContent = ""), 3000);
-    } catch (e) {
-      msg.textContent = "❌ Ошибка: " + e.message;
-    }
-  });
+          <h3 class="card-title" style="margin-top: 20px; font-size: 16px;">📈 История ваших посещений</h3>
+          <div class="table-wrap" style="max-height: 250px; overflow-y: auto; margin-top: 10px;">
+            <table id="user-history-table">
+              <thead><tr><th>Дата</th><th>Время</th><th>Тип</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <p id="user-no-history" class="muted" style="margin-top: 10px;">У вас пока нет записей о входах.</p>
+          </div>
 
-function renderAdminAnnouncements() {
-  if (!adminOpen) return;
-  const tbody = document.querySelector("#admin-ann-table tbody");
-  const noMsg = document.getElementById("admin-no-ann");
-  tbody.innerHTML = "";
+          <p class="muted" style="margin: 16px 0 0">Устройство привязано к вашему аккаунту. Перейдите на вкладку «Сканер», чтобы отметиться.</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
-  if (announcementsCache.length === 0) {
-    noMsg.style.display = "block";
-    return;
-  }
-  noMsg.style.display = "none";
+  <!-- ===== РАЗДЕЛ ОБЪЯВЛЕНИЙ ===== -->
+  <section id="announcements" class="page">
+    <div class="card">
+      <h2 class="card-title">📢 Доска объявлений</h2>
+      <p class="muted" style="margin-bottom: 20px;">Важные новости, изменения и сообщения от руководства.</p>
+      <div id="announcements-feed" class="announcements-feed">
+        <p class="muted" id="no-announcements">Загрузка объявлений...</p>
+      </div>
+    </div>
+  </section>
 
-  announcementsCache.forEach((ann) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${ann.date}</td><td><b>${esc(ann.title)}</b></td><td><button class="btn danger sm del-ann-btn" data-id="${ann.id}">Удалить</button></td>`;
-    tbody.appendChild(tr);
-  });
+  <!-- ===== АДМИН-ПАНЕЛЬ ===== -->
+  <section id="admin" class="page">
+    <div class="card" id="admin-lock">
+      <h2 class="card-title">🔒 Вход в админ-панель</h2>
+      <p class="muted">Введите пароль администратора для управления системой.</p>
+      <div class="form" style="max-width: 320px; margin-top: 15px;">
+        <input type="password" id="admin-pass" placeholder="Пароль администратора">
+        <button id="admin-unlock" class="btn primary">Разблокировать</button>
+      </div>
+      <div id="admin-lock-msg" class="last-scan"></div>
+    </div>
 
-  document.querySelectorAll(".del-ann-btn").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.target.dataset.id;
-      if (confirm("Удалить объявление?")) {
-        await db.collection("announcements").doc(id).delete();
-      }
-    });
-  });
-}
+    <div id="admin-content" class="hidden">
+      <!-- Блок создания объявления -->
+      <div class="card admin-section-card">
+        <h2 class="card-title">✍️ Опубликовать объявление</h2>
+        <div class="form" style="max-width: 100%;">
+          <input type="text" id="ann-title" placeholder="Заголовок объявления">
+          <textarea id="ann-text" placeholder="Текст сообщения..." rows="3"></textarea>
+          <input type="text" id="ann-image" placeholder="Ссылка на фото (необязательно)">
+          <button id="publish-ann-btn" class="btn primary" style="width: fit-content;">Опубликовать</button>
+        </div>
+        <div id="ann-publish-msg" class="muted" style="margin-top: 8px;"></div>
+      </div>
 
-/* ================= ТАБЛИЦЫ И СТАТИСТИКА ================= */
-function renderTable() {
-  if (!adminOpen) return;
-  const tbody = document.querySelector("#log-table tbody");
-  const dateFilter = document.getElementById("filter-date").value;
-  const rows = Attendance.buildRows(logsCache, employeesCache).filter(row => !dateFilter || row.date === dateFilter);
-  tbody.innerHTML = "";
-  document.getElementById("empty-msg").style.display = rows.length ? "none" : "block";
-  const lateCount = rows.filter(row => row.late > 0).length;
-  const earlyCount = rows.filter(row => row.early > 0).length;
-  document.getElementById("attendance-summary").innerHTML = '<span>Посещений <b>' + rows.length + '</b></span><span>С опозданием <b>' + lateCount + '</b></span><span>С ранним уходом <b>' + earlyCount + '</b></span>';
-  rows.forEach(row => {
-    const tr = document.createElement("tr");
-    const notes = Attendance.notes(row).map(note => {
-      const tone = note.startsWith('Опоздал') ? 'late' : note.startsWith('Ранний') ? 'early' : note === 'По графику' ? 'ok' : 'neutral';
-      return '<span class="attendance-note ' + tone + '">' + esc(note) + '</span>';
-    }).join('');
-    const exit = row.exit ? esc(row.exit.time) + (row.exit.date !== row.date ? '<small class="next-day">' + esc(row.exit.date) + '</small>' : '') : '<span class="muted">—</span>';
-    tr.innerHTML = '<td class="attendance-date">' + esc(row.date) + '</td><td><b>' + esc(row.name) + '</b></td><td class="attendance-time">' + (row.entry ? esc(row.entry.time) : '—') + '</td><td class="attendance-time">' + exit + '</td><td><div class="attendance-notes">' + notes + '</div></td>';
-    tbody.appendChild(tr);
-  });
-}
+      <!-- Список объявлений -->
+      <div class="card admin-section-card">
+        <h2 class="card-title">🗑️ Активные объявления</h2>
+        <div class="table-wrap">
+          <table id="admin-ann-table">
+            <thead><tr><th>Дата</th><th>Заголовок</th><th>Действие</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="admin-no-ann" class="muted">Нет активных объявлений.</p>
+        </div>
+      </div>
 
-function renderEmployees() {
-  if (!adminOpen) return;
-  document.getElementById("employee-count").textContent = employeesCache.length;
-  const tbody = document.querySelector("#emp-table tbody");
-  tbody.innerHTML = "";
+      <!-- Зарегистрированные сотрудники -->
+      <div class="card admin-section-card">
+        <h2 class="card-title">Зарегистрированные сотрудники <span id="employee-count" class="status-badge">0</span></h2>
+        <p class="muted">Все, кто создал профиль на сайте. Список обновляется автоматически.</p>
+        <div class="table-wrap">
+          <table id="emp-table">
+            <thead><tr><th>Имя</th><th>Статус</th><th>Часы сегодня</th><th>Рабочий график</th><th>Действия</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
 
-  if (employeesCache.length === 0) {
-    tbody.innerHTML =
-      '<tr><td colspan="5" class="muted" style="text-align:center;">Пока никто не зарегистрирован.</td></tr>';
-    return;
-  }
+      <!-- Детальный просмотр по сотрудникам -->
+      <div class="card admin-section-card">
+        <h2 class="card-title">👤 Отчет по конкретному сотруднику</h2>
+        <div class="admin-toolbar" style="margin-top: 10px;">
+          <select id="admin-employee-select" class="form-select" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: #fff;">
+            <option value="">-- Выберите сотрудника --</option>
+          </select>
+          <button id="export-user-csv" class="btn primary sm">⬇ Скачать отчет сотрудника</button>
+        </div>
+        <div class="table-wrap" style="max-height: 250px; overflow-y: auto; margin-top: 12px;">
+          <table id="admin-user-history-table">
+            <thead><tr><th>Дата</th><th>Время</th><th>Тип</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="admin-user-no-history" class="muted" style="margin-top: 10px;">Выберите сотрудника из списка выше, чтобы увидеть его историю.</p>
+        </div>
+      </div>
 
-  const todayStr = fmtDate(new Date());
-  employeesCache.forEach((e) => {
-    const userLogs = logsCache.filter((l) => l.name === e.name);
-    const lastLog = userLogs.length > 0 ? userLogs[0] : null;
-    const isInside = lastLog && lastLog.type === "in";
-    const statusHtml = isInside
-      ? '<span class="badge in">Внутри</span>'
-      : '<span class="badge out">Вне кухни</span>';
-    const timeData = calculateEmployeeHours(e.name, todayStr);
+      <!-- Общий журнал и сотрудники -->
+      <div class="card admin-section-card">
+        <h2 class="card-title">📋 Общий журнал посещений</h2><p class="muted">Вход и выход — в одной строке. Опоздания считаются по первому входу за день, ранний уход — по последнему выходу.</p><div id="attendance-summary" class="attendance-summary" aria-live="polite"></div>
+        <div class="admin-toolbar">
+          <label>Дата: <input type="date" id="filter-date"></label>
+          <button id="show-all" class="btn ghost sm">Все записи</button>
+          
+          <select id="export-period" style="padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; background: #fff;">
+            <option value="day">За выбранный день</option>
+            <option value="week">За последнюю неделю (7 дней)</option>
+            <option value="month">За последний месяц (30 дней)</option>
+            <option value="all">За всё время</option>
+          </select>
+          <button id="export-csv" class="btn primary sm">⬇ Скачать отчет</button>
 
-    const schedule = Attendance.scheduleFor(e, todayStr);
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><b>${esc(e.name)}</b></td>
-      <td>${statusHtml}</td>
-      <td><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
-      <td><span class="employee-schedule">${schedule ? esc(schedule.start) + " — " + esc(schedule.end) : "Не задан"}</span></td>
-      <td><div class="employee-actions"><button class="btn primary sm schedule-btn" data-id="${esc(e.id)}">График</button><button class="btn danger sm del-emp-btn" data-id="${esc(e.id)}" data-name="${esc(e.name)}">Удалить</button></div></td>
-    `;
-    tbody.appendChild(tr);
-  });
+          <button id="clear-data" class="btn danger sm">🗑 Очистить</button>
+        </div>
+        <div class="table-wrap">
+          <table id="log-table">
+            <thead><tr><th>Дата</th><th>Сотрудник</th><th>Вход</th><th>Выход</th><th>Отметки</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="empty-msg" class="muted">Пока нет записей.</p>
+        </div>
 
-  document.querySelectorAll(".del-emp-btn").forEach((btn) => {
-    btn.addEventListener("click", async (event) => {
-      const id = event.target.dataset.id;
-      const name = event.target.dataset.name;
-      if (confirm(`Удалить сотрудника ${name}?`)) {
-        await db.collection("employees").doc(id).delete();
-      }
-    });
-  });
-}
 
-/* ================= ОБНОВЛЕНИЕ ВСЕХ ВЫПАДАЮЩИХ СПИСКОВ СОТРУДНИКОВ ================= */
-function updateAdminEmployeeSelects() {
-  const selectUser = document.getElementById("admin-employee-select");
+        <details class="manual qr-gen">
+          <summary>🔳 QR-коды для дверей</summary>
+          <div id="door-qr-list" class="qr-list"></div>
+        </details>
 
-  if (selectUser) {
-    const currentVal = selectUser.value;
-    selectUser.innerHTML =
-      '<option value="">-- Выберите сотрудника --</option>';
-    employeesCache.forEach((e) => {
-      const opt = document.createElement("option");
-      opt.value = e.name;
-      opt.textContent = e.name;
-      if (e.name === currentVal) opt.selected = true;
-      selectUser.appendChild(opt);
-    });
-  }
+        <button id="admin-lock-btn" class="btn ghost" style="margin-top:20px">🔒 Заблокировать админку</button>
+      </div>
+    </div>
+  </section>
+</main><footer class="site-footer"><span>Kitchen Track</span><span>Каждая минута на своём месте.</span></footer>
 
-}
-
-function renderAdminUserHistory() {
-  if (!adminOpen) return;
-  const select = document.getElementById("admin-employee-select");
-  const tbody = document.querySelector("#admin-user-history-table tbody");
-  const noMsg = document.getElementById("admin-user-no-history");
-  if (!select || !tbody) return;
-
-  const selectedName = select.value;
-  tbody.innerHTML = "";
-
-  if (!selectedName) {
-    noMsg.style.display = "block";
-    noMsg.textContent =
-      "Выберите сотрудника из списка выше, чтобы увидеть его историю.";
-    return;
-  }
-
-  const userLogs = logsCache.filter((l) => l.name === selectedName);
-  if (userLogs.length === 0) {
-    noMsg.style.display = "block";
-    noMsg.textContent = `У сотрудника ${selectedName} пока нет записей о посещениях.`;
-    return;
-  }
-  noMsg.style.display = "none";
-
-  userLogs.forEach((l) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${l.date}</td><td>${l.time}</td><td><span class="badge ${l.type}">${l.type === "in" ? "Вход" : "Выход"}</span></td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-document
-  .getElementById("admin-employee-select")
-  .addEventListener("change", renderAdminUserHistory);
-
-document.getElementById("export-user-csv").addEventListener("click", () => {
-  const select = document.getElementById("admin-employee-select");
-  const selectedName = select.value;
-  if (!selectedName) {
-    alert("Сначала выберите сотрудника из выпадающего списка!");
-    return;
-  }
-
-  const userLogs = logsCache.filter((l) => l.name === selectedName);
-  if (userLogs.length === 0) {
-    alert("У выбранного сотрудника нет записей для экспорта.");
-    return;
-  }
-
-  const rows = [["Дата", "Время", "Сотрудник", "Тип"]];
-  userLogs.forEach((e) =>
-    rows.push([e.date, e.time, e.name, e.type === "in" ? "Вход" : "Выход"]),
-  );
-
-  const csv =
-    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(
-    new Blob([csv], { type: "text/csv;charset=utf-8" }),
-  );
-  a.download = `report_${selectedName.replace(/\s+/g, "_")}.csv`;
-  a.click();
-});
-
-/* ================= ЭКСПОРТ ОБЩЕГО ЖУРНАЛА ================= */
-document.getElementById("export-csv").addEventListener("click", () => {
-  const period = document.getElementById("export-period").value;
-  const dateFilterInput = document.getElementById("filter-date").value;
-  const nowMs = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-
-  let filteredLogs = logsCache;
-
-  if (period === "day") {
-    filteredLogs = logsCache.filter(
-      (e) => !dateFilterInput || e.date === dateFilterInput,
-    );
-  } else if (period === "week") {
-    const weekAgo = nowMs - 7 * dayMs;
-    filteredLogs = logsCache.filter((e) => e.ts >= weekAgo);
-  } else if (period === "month") {
-    const monthAgo = nowMs - 30 * dayMs;
-    filteredLogs = logsCache.filter((e) => e.ts >= monthAgo);
-  }
-
-  if (filteredLogs.length === 0) {
-    alert("За выбранный период нет записей для экспорта.");
-    return;
-  }
-
-  const rows = [["Дата", "Сотрудник", "Время входа", "Время выхода", "Дата выхода", "Отметки"]];
-  const includedLogs = new Set(filteredLogs);
-  Attendance.buildRows(logsCache, employeesCache)
-    .filter(row => includedLogs.has(row.entry || row.exit))
-    .forEach(row => rows.push([row.date, row.name, row.entry?.time || "", row.exit?.time || "", row.exit?.date || "", Attendance.notes(row).join("; ")]));
-
-  const csv =
-    "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(
-    new Blob([csv], { type: "text/csv;charset=utf-8" }),
-  );
-  a.download = `kitchen-log-${period}.csv`;
-  a.click();
-});
-
-document.getElementById("filter-date").value = fmtDate(new Date());
-document.getElementById("filter-date").addEventListener("change", renderTable);
-document.getElementById("show-all").addEventListener("click", () => {
-  document.getElementById("filter-date").value = "";
-  renderTable();
-});
-
-document.getElementById("clear-data").addEventListener("click", async () => {
-  if (confirm("Удалить ВСЕ записи журнала посещений?")) {
-    const snapshot = await db.collection("logs").get();
-    const batch = db.batch();
-    snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-    await batch.commit();
-  }
-});
-
-/* ================= QR-КОДЫ ДВЕРЕЙ ================= */
-function buildDoorQr() {
-  const list = document.getElementById("door-qr-list");
-  if (!list) return;
-  list.innerHTML = "";
-  const doors = [
-    { label: "🟢 ВХОД на кухню", text: QR_ENTRANCE },
-    { label: "🔴 ВЫХОД с кухни", text: QR_EXIT },
-  ];
-  doors.forEach((d) => {
-    const item = document.createElement("div");
-    item.className = "qr-item";
-    const holder = document.createElement("div");
-    const btn = document.createElement("button");
-    btn.className = "btn ghost sm";
-    btn.textContent = "Печать";
-    item.appendChild(holder);
-    item.insertAdjacentHTML("beforeend", `<div class="name">${d.label}</div>`);
-    item.appendChild(btn);
-    list.appendChild(item);
-
-    if (typeof QRCode !== "undefined") {
-      new QRCode(holder, { text: d.text, width: 130, height: 130 });
-    }
-    btn.addEventListener("click", () => {
-      const win = window.open("", "_blank");
-      win.document.write(
-        `<html><head><title>${d.label}</title></head><body style="text-align:center;padding:40px;font-family:sans-serif"><h2>${d.label}</h2>${holder.innerHTML}</body></html>`,
-      );
-      win.document.close();
-      win.print();
-    });
-  });
-}
-
-buildDoorQr();
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="ui.js"></script>
+<script src="attendance.js"></script>
+<script src="app.js"></script>
+<dialog id="schedule-dialog" class="schedule-dialog" aria-labelledby="schedule-title">
+  <form id="schedule-form">
+    <p class="eyebrow">ИНДИВИДУАЛЬНЫЙ ГРАФИК</p>
+    <h2 id="schedule-title">Рабочее время</h2>
+    <p id="schedule-employee-name" class="schedule-person"></p>
+    <div class="schedule-fields"><label>Начало смены<input type="time" name="start" required></label><span aria-hidden="true">→</span><label>Конец смены<input type="time" name="end" required></label></div>
+    <p class="schedule-hint">Действует ежедневно с сегодняшнего дня. Прошлые даты сохраняют прежний график. Если конец раньше начала, смена заканчивается на следующий день.</p>
+    <p id="schedule-message" class="schedule-message" role="status" aria-live="polite"></p>
+    <div class="schedule-actions"><button type="button" id="schedule-clear" class="btn ghost sm">Без графика</button><button type="button" id="schedule-cancel" class="btn ghost sm">Отмена</button><button type="submit" class="btn primary sm">Сохранить</button></div>
+  </form>
+</dialog>
+<script src="schedule-ui.js"></script>
+</body>
+</html>
