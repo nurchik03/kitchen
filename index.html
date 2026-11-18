@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Кухня исакеева — Учёт посещений</title>
-  <link rel="stylesheet" href="style.css?v=admin-layout">
+  <link rel="stylesheet" href="style.css?v=admin-mobile">
   <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=3">
   <meta name="theme-color" content="#2563eb">
   <base target="_blank">
@@ -126,10 +126,12 @@
       <div class="card admin-section-card">
         <h2 class="card-title">Зарегистрированные сотрудники <span id="employee-count" class="status-badge">0</span></h2>
         <p class="muted">Все, кто создал профиль на сайте. Список обновляется автоматически.</p>
-        <div class="table-wrap">
-          <table id="emp-table">
-            <thead><tr><th>Имя</th><th>Статус</th><th>Часы сегодня</th><th>Рабочий график</th><th>Действия</th></tr></thead>
-            <tbody></tbody>
+        <div class="table-wrap employee-table-wrap">
+          <table id="emp-table" role="table" aria-label="Зарегистрированные сотрудники">
+            <thead role="rowgroup">
+              <tr role="row"><th scope="col">Имя</th><th scope="col">Статус</th><th scope="col">Часы сегодня</th><th scope="col">Рабочий график</th><th scope="col">Действия</th></tr>
+            </thead>
+            <tbody role="rowgroup"></tbody>
           </table>
         </div>
       </div>
@@ -241,7 +243,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="ui.js"></script>
 <script src="attendance.js?v=weekly-schedule"></script>
-<script src="app.js?v=weekly-schedule"></script>
+<script src="app.js?v=admin-mobile"></script>
 <dialog id="schedule-dialog" class="schedule-dialog" aria-labelledby="schedule-title">
   <form id="schedule-form">
     <p class="eyebrow">ИНДИВИДУАЛЬНЫЙ ГРАФИК</p>
