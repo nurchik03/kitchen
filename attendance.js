@@ -5,11 +5,28 @@ const Attendance = (() => {
     const [h, m] = time.split(':').map(Number);
     return h < 24 && m < 60 ? h * 60 + m : null;
   }
-  function scheduleFor(employee, date) {
+  function validHours(shift) {
+    if (!shift || minutes(shift.start) === null || minutes(shift.end) === null) return null;
+    return { start: shift.start, end: shift.end };
+  }
+  function weeklyScheduleFor(employee, date) {
     const history = (employee?.scheduleHistory || []).filter(s => s.effectiveFrom <= date)
       .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
-    const schedule = history[0];
-    return schedule && minutes(schedule.start) !== null && minutes(schedule.end) !== null ? schedule : null;
+    const version = history[0];
+    const weekdays = validHours(version);
+    // Existing schedules used the same shift on Sundays until a separate Sunday is saved.
+    const sunday = version?.sunday === undefined ? weekdays : validHours(version.sunday);
+    return { weekdays, sunday, sundayOff: version?.sunday === null };
+  }
+  function dailySchedule(employee, date) {
+    const day = new Date(`${date}T12:00:00`).getDay();
+    if (day === 6) return { schedule: null, dayOff: true };
+    const week = weeklyScheduleFor(employee, date);
+    if (day === 0) return { schedule: week.sunday, dayOff: week.sundayOff };
+    return { schedule: week.weekdays, dayOff: false };
+  }
+  function scheduleFor(employee, date) {
+    return dailySchedule(employee, date).schedule;
   }
   function scheduledTime(date, time) {
     const [year, month, day] = date.split('-').map(Number);
@@ -41,8 +58,11 @@ const Attendance = (() => {
     for (const group of groups.values()) {
       const firstEntry = group.find(r => r.entry);
       const last = group[group.length - 1];
+      const { name, date } = group[0];
+      const { schedule, dayOff } = dailySchedule(employeeMap.get(name), date);
       for (const row of group) {
-        row.schedule = scheduleFor(employeeMap.get(row.name), row.date);
+        row.schedule = schedule;
+        row.dayOff = dayOff;
         row.late = 0; row.early = 0;
         if (!row.schedule) continue;
         const start = scheduledTime(row.date, row.schedule.start);
@@ -63,9 +83,10 @@ const Attendance = (() => {
     if (row.early) notes.push(`Ранний уход на ${row.early} мин.`);
     if (!row.entry) notes.push('Нет отметки входа');
     if (!row.exit) notes.push('Выход не отмечен');
-    if (!row.schedule) notes.push('График не задан');
+    if (row.dayOff) notes.push('Выходной');
+    else if (!row.schedule) notes.push('График не задан');
     if (!notes.length) notes.push('По графику');
     return notes;
   }
-  return { minutes, scheduleFor, buildRows, notes };
+  return { minutes, scheduleFor, weeklyScheduleFor, buildRows, notes };
 })();
