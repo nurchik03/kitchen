@@ -366,7 +366,9 @@ input::placeholder,textarea::placeholder{color:#898d93;font-size:12px}
   gap: 22px;
 }
 #admin-content > .card { min-width: 0; margin: 0; }
-#emp-table td:first-child { overflow-wrap: anywhere; }
+#emp-table .employee-name { overflow-wrap: anywhere; }
+.employee-empty { text-align: center; }
+.employee-mobile-label { display: none; }
 .admin-toolbar{gap:9px;margin-top:18px;padding:15px;background:#f4f6f9;border-radius:11px;align-items:center}
 .admin-toolbar label{font-size:12px;color:var(--text-muted)}
 select,.admin-toolbar input[type=date]{max-width:100%;color:var(--text-main);min-height:36px;outline-offset:3px}
@@ -436,6 +438,35 @@ tbody tr:hover{background:#f7f9fb}
 }
 .employee-schedule span { display: block; }
 .employee-schedule small { display: inline-block; min-width: 33px; color: var(--text-muted); }
+@media (max-width: 680px) {
+  .employee-table-wrap { overflow: visible; }
+  #emp-table { display: block; }
+  #emp-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #emp-table tbody { display: grid; gap: 12px; }
+  #emp-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: #f7f9fc;
+  }
+  #emp-table td { display: block; min-width: 0; padding: 0; border: 0; }
+  #emp-table :is(.employee-name, .employee-shifts, .employee-commands, .employee-empty) { grid-column: 1 / -1; }
+  #emp-table .employee-name { font-size: 15px; line-height: 1.4; }
+  #emp-table .employee-shifts { padding-top: 10px; border-top: 1px solid var(--border-color); }
+  .employee-mobile-label { display: block; margin-bottom: 4px; color: var(--text-muted); font-size: 11px; }
+  .employee-table-wrap .employee-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .employee-table-wrap .employee-actions .btn { min-height: 44px; font-size: 12px; }
+}
 .schedule-fields{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:9px;align-items:end}
 .schedule-fields>span{padding-bottom:12px;text-align:center;color:#99a2ae}
 .schedule-fields label{font-size:11px;font-weight:600;color:#606976}
