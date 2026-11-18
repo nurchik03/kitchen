@@ -317,8 +317,29 @@ function renderUserHistory() {
 }
 
 /* ================= СКАНИРОВАНИЕ ================= */
+const scanResult = document.getElementById("result");
+const scanResultClose = document.getElementById("result-close");
+const scanStart = document.getElementById("scan-start");
 let lastScanTime = 0;
+
 async function handleScan(text) {
+  if (scanResult.open || !document.getElementById("scan").classList.contains("active")) return;
+
+  showResult("pending", "Проверяем QR-код…", "Подождите, пока завершится проверка.");
+  scanResultClose.disabled = true;
+  scanResult.showModal();
+  const cameraStopped = stopScanner();
+
+  try {
+    await recordScan(text);
+  } finally {
+    await cameraStopped;
+    scanResultClose.disabled = false;
+    scanResultClose.focus();
+  }
+}
+
+async function recordScan(text) {
   const code = (text || "").trim();
   const now = new Date();
   const nowMs = now.getTime();
@@ -326,21 +347,25 @@ async function handleScan(text) {
   const isIn = code === QR_ENTRANCE;
   const isOut = code === QR_EXIT;
   if (!isIn && !isOut) {
-    showResult(false, "❌ Неверный QR-код", "Это не код двери кухни.");
+    showResult("error", "Неверный QR-код", "Наведите камеру на код у двери кухни.");
     return;
   }
 
   const user = currentUser();
   if (!user) {
     showResult(
-      false,
-      "❌ Ошибка",
-      "Сначала войдите в аккаунт на этом устройстве.",
+      "error",
+      "Сначала войдите в профиль",
+      "Войдите в свой аккаунт, чтобы отметить вход или выход.",
     );
     return;
   }
 
-  if (nowMs - lastScanTime < COOLDOWN_MS) return;
+  if (nowMs - lastScanTime < COOLDOWN_MS) {
+    const seconds = Math.ceil((COOLDOWN_MS - (nowMs - lastScanTime)) / 1000);
+    showResult("error", "Слишком рано для новой отметки", `Повторите сканирование через ${seconds} с.`);
+    return;
+  }
 
   const targetType = isIn ? "in" : "out";
   const userLogs = logsCache.filter((l) => l.name === user.name);
@@ -348,18 +373,19 @@ async function handleScan(text) {
   const currentStatus = lastUserLog ? lastUserLog.type : "out";
 
   if (targetType === "in" && currentStatus === "in") {
-    showResult(false, "⚠️ Вы уже внутри!", "Сначала отсканируйте код выхода.");
+    showResult("error", "Вы уже внутри", "Вход отмечен. Для выхода отсканируйте код выхода.");
     lastScanTime = nowMs;
     return;
   }
   if (targetType === "out" && currentStatus === "out") {
-    showResult(false, "⚠️ Вы ещё не вошли!", "Сначала отсканируйте код входа.");
+    showResult("error", "Вход ещё не отмечен", "Сначала отсканируйте код входа.");
     lastScanTime = nowMs;
     return;
   }
 
   lastScanTime = nowMs;
 
+  showResult("pending", "Сохраняем отметку…", "Подождите подтверждения.");
   try {
     await db.collection("logs").add({
       ts: nowMs,
@@ -369,65 +395,84 @@ async function handleScan(text) {
       type: targetType,
     });
 
-    if (targetType === "in") {
-      showResult(
-        true,
-        "🟢 ВХОД УСПЕШЕН!",
-        `Добро пожаловать, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
-      );
-    } else {
-      showResult(
-        true,
-        "🔴 ВЫХОД УСПЕШЕН!",
-        `До свидания, ${esc(user.name)}!<br><span class='muted'>Время: ${fmtTime(now)}</span>`,
-      );
-    }
+    showResult(
+      "success",
+      targetType === "in" ? "Вход отмечен" : "Выход отмечен",
+      `${user.name} · ${fmtTime(now)}`,
+    );
   } catch (e) {
-    showResult(false, "❌ Ошибка сохранения", e.message);
+    lastScanTime = 0;
+    showResult("error", "Не удалось сохранить отметку", "Проверьте интернет и отсканируйте код ещё раз.");
   }
 }
 
-function showResult(ok, title, html) {
-  const box = document.getElementById("result");
-  box.classList.remove("hidden", "bad");
-  if (!ok) box.classList.add("bad");
-
-  document.getElementById("result-icon").textContent = ok ? "✅" : "⚠️";
-  document.getElementById("result-text").innerHTML = `
-    <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">${title}</div>
-    <div>${html}</div>
-  `;
-
-  clearTimeout(showResult._t);
-  showResult._t = setTimeout(
-    () => box.classList.add("hidden"),
-    ok ? 8000 : 5000,
-  );
+function showResult(state, title, message) {
+  const icons = { pending: "…", success: "✓", error: "!" };
+  scanResult.dataset.state = state;
+  document.getElementById("result-icon").textContent = icons[state];
+  document.getElementById("result-title").textContent = title;
+  document.getElementById("result-text").textContent = message;
 }
+
+scanResult.addEventListener("cancel", (event) => {
+  if (scanResultClose.disabled) event.preventDefault();
+});
 
 /* ================= КАМЕРА ================= */
 let scanner = null;
+let scannerReady = null;
+const scanReader = document.getElementById("reader");
+const cameraStatus = document.getElementById("cam-status");
+
+scanStart.addEventListener("click", startScanner);
+
 async function startScanner() {
-  const status = document.getElementById("cam-status");
+  if (scanner || scanResult.open) return;
   if (typeof Html5Qrcode === "undefined") {
-    status.textContent = "⚠️ Модуль камеры не загружен.";
+    cameraStatus.textContent = "Модуль камеры не загружен. Обновите страницу.";
     return;
   }
-  if (scanner) return;
 
-  scanner = new Html5Qrcode("reader");
+  cameraStatus.textContent = "Включаем камеру…";
+  scanStart.classList.add("hidden");
+  scanReader.classList.remove("hidden");
   try {
-    await scanner.start(
+    scanner = new Html5Qrcode("reader");
+    scannerReady = scanner.start(
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 220, height: 220 } },
       handleScan,
       () => {},
     );
-    status.textContent = "📷 Камера активна. Наведите на QR-код.";
+    await scannerReady;
+    cameraStatus.textContent = "Камера активна. Наведите её на QR-код.";
   } catch (e) {
     scanner = null;
-    status.textContent = "⚠️ Ошибка камеры: " + e.message;
+    scannerReady = null;
+    scanReader.classList.add("hidden");
+    scanStart.classList.remove("hidden");
+    cameraStatus.textContent = "Не удалось включить камеру. Проверьте разрешение в браузере.";
   }
+}
+
+async function stopScanner() {
+  const activeScanner = scanner;
+  if (!activeScanner) return;
+
+  try {
+    await scannerReady;
+    await activeScanner.stop();
+  } catch (e) {
+    cameraStatus.textContent = "Не удалось остановить камеру.";
+    return;
+  }
+
+  scanner = null;
+  scannerReady = null;
+  scanReader.replaceChildren();
+  scanReader.classList.add("hidden");
+  scanStart.classList.remove("hidden");
+  cameraStatus.textContent = "Камера выключена.";
 }
 
 /* ================= АДМИН-ПАНЕЛЬ ================= */
@@ -485,6 +530,7 @@ if (adminOpen) {
 /* ================= ОБЪЯВЛЕНИЯ ================= */
 function renderAnnouncements() {
   const container = document.getElementById("announcements-feed");
+  if (!container) return;
   if (announcementsCache.length === 0) {
     container.innerHTML =
       '<p class="muted" id="no-announcements">Пока нет ни одного объявления.</p>';
@@ -510,6 +556,7 @@ function renderAnnouncements() {
 
 function updateAnnouncementsBadge() {
   const badge = document.getElementById("ann-badge");
+  if (!badge) return;
   if (announcementsCache.length > 0) {
     badge.textContent = announcementsCache.length;
     badge.classList.remove("hidden");
@@ -520,7 +567,7 @@ function updateAnnouncementsBadge() {
 
 document
   .getElementById("publish-ann-btn")
-  .addEventListener("click", async () => {
+  ?.addEventListener("click", async () => {
     const title = document.getElementById("ann-title").value.trim();
     const text = document.getElementById("ann-text").value.trim();
     const image = document.getElementById("ann-image").value.trim();
@@ -555,6 +602,7 @@ function renderAdminAnnouncements() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#admin-ann-table tbody");
   const noMsg = document.getElementById("admin-no-ann");
+  if (!tbody || !noMsg) return;
   tbody.innerHTML = "";
 
   if (announcementsCache.length === 0) {
