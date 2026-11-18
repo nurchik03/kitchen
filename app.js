@@ -165,9 +165,6 @@ function switchTab(id) {
     .querySelectorAll(".page")
     .forEach((p) => p.classList.toggle("active", p.id === id));
 
-  if (id === "scan" && !scanner) {
-    startScanner();
-  }
   updateAuthUI();
 }
 
@@ -232,7 +229,7 @@ document.getElementById("reg-btn").addEventListener("click", async () => {
       (i) => (document.getElementById(i).value = ""),
     );
     updateAuthUI();
-    switchTab("scan");
+    switchTab("auth");
   } catch (e) {
     msg.textContent = "❌ Ошибка регистрации: " + e.message;
   }
@@ -255,23 +252,20 @@ document.getElementById("login-btn").addEventListener("click", () => {
   document.getElementById("login-name").value = "";
   document.getElementById("login-pass").value = "";
   updateAuthUI();
-  switchTab("scan");
+  switchTab("auth");
 });
 
 function updateAuthUI() {
   const user = currentUser();
   document.getElementById("auth-forms").classList.toggle("hidden", !!user);
   document.getElementById("logged-view").classList.toggle("hidden", !user);
+  const canScan = Boolean(user) && !adminOpen;
+  scanDock.classList.toggle("hidden", !canScan);
+  if (!canScan && scanSheet.open) scanSheet.close();
 
   if (user) {
     document.getElementById("logged-name").innerHTML =
       `👤 <b>${esc(user.name)}</b> <span class='muted'>(в системе с ${user.regDate})</span>`;
-    document.getElementById("scan-user").innerHTML = `
-      <div class="avatar">${esc(user.name.trim()[0].toUpperCase())}</div>
-      <div><div class="who-name">${esc(user.name)}</div><div class="muted">Аккаунт активен для сканирования</div></div>
-    `;
-    document.getElementById("scan-user").style.display = "flex";
-
     const todayStr = fmtDate(new Date());
     const userLogs = logsCache.filter((l) => l.name === user.name);
     const lastLog = userLogs.length > 0 ? userLogs[0] : null;
@@ -287,8 +281,6 @@ function updateAuthUI() {
       `${timeData.hours} ч. ${timeData.minutes} мин.`;
 
     renderUserHistory();
-  } else {
-    document.getElementById("scan-user").style.display = "none";
   }
 }
 
@@ -317,25 +309,58 @@ function renderUserHistory() {
 }
 
 /* ================= СКАНИРОВАНИЕ ================= */
-const scanResult = document.getElementById("result");
-const scanResultClose = document.getElementById("result-close");
-const scanStart = document.getElementById("scan-start");
+const scanSheet = document.getElementById("scan-sheet");
+const scanDock = document.getElementById("scan-dock");
+const scanLaunch = document.getElementById("scan-launch");
+const scanAction = document.getElementById("scan-action");
+const scanReader = document.getElementById("reader");
+const scanIcon = document.getElementById("scan-state-icon");
+const scanTitle = document.getElementById("scan-title");
+const scanMessage = document.getElementById("scan-message");
+const scanStates = {
+  camera: { icon: "qr" },
+  pending: { icon: "qr" },
+  success: { icon: "check", action: "Готово" },
+  error: { icon: "warning", action: "Попробовать снова" },
+  login: { icon: "warning", action: "Войти в профиль" },
+};
+let camera = null;
+let scanInProgress = false;
 let lastScanTime = 0;
 
+scanLaunch.addEventListener("click", () => {
+  if (adminOpen || !currentUser() || scanSheet.open) return;
+  scanSheet.showModal();
+  if (!scanInProgress) startScanner();
+});
+
+scanAction.addEventListener("click", () => {
+  if (scanSheet.dataset.state === "error") {
+    startScanner();
+    return;
+  }
+  scanSheet.close();
+  if (scanSheet.dataset.state === "login") {
+    switchTab("auth");
+    document.getElementById("login-name").focus();
+  }
+});
+
+scanSheet.addEventListener("close", () => {
+  if (!scanSheet.open) stopScanner();
+});
+
 async function handleScan(text) {
-  if (scanResult.open || !document.getElementById("scan").classList.contains("active")) return;
+  if (!scanSheet.open || scanInProgress) return;
 
-  showResult("pending", "Проверяем QR-код…", "Подождите, пока завершится проверка.");
-  scanResultClose.disabled = true;
-  scanResult.showModal();
+  scanInProgress = true;
   const cameraStopped = stopScanner();
-
   try {
     await recordScan(text);
   } finally {
     await cameraStopped;
-    scanResultClose.disabled = false;
-    scanResultClose.focus();
+    scanInProgress = false;
+    scanAction.disabled = false;
   }
 }
 
@@ -347,14 +372,18 @@ async function recordScan(text) {
   const isIn = code === QR_ENTRANCE;
   const isOut = code === QR_EXIT;
   if (!isIn && !isOut) {
-    showResult("error", "Неверный QR-код", "Наведите камеру на код у двери кухни.");
+    showResult(
+      "error",
+      "Неверный QR-код",
+      "Наведите камеру на код у двери кухни.",
+    );
     return;
   }
 
   const user = currentUser();
   if (!user) {
     showResult(
-      "error",
+      "login",
       "Сначала войдите в профиль",
       "Войдите в свой аккаунт, чтобы отметить вход или выход.",
     );
@@ -363,7 +392,11 @@ async function recordScan(text) {
 
   if (nowMs - lastScanTime < COOLDOWN_MS) {
     const seconds = Math.ceil((COOLDOWN_MS - (nowMs - lastScanTime)) / 1000);
-    showResult("error", "Слишком рано для новой отметки", `Повторите сканирование через ${seconds} с.`);
+    showResult(
+      "error",
+      "Слишком рано для новой отметки",
+      `Повторите сканирование через ${seconds} с.`,
+    );
     return;
   }
 
@@ -373,12 +406,20 @@ async function recordScan(text) {
   const currentStatus = lastUserLog ? lastUserLog.type : "out";
 
   if (targetType === "in" && currentStatus === "in") {
-    showResult("error", "Вы уже внутри", "Вход отмечен. Для выхода отсканируйте код выхода.");
+    showResult(
+      "error",
+      "Вы уже внутри",
+      "Вход отмечен. Для выхода отсканируйте код выхода.",
+    );
     lastScanTime = nowMs;
     return;
   }
   if (targetType === "out" && currentStatus === "out") {
-    showResult("error", "Вход ещё не отмечен", "Сначала отсканируйте код входа.");
+    showResult(
+      "error",
+      "Вход ещё не отмечен",
+      "Сначала отсканируйте код входа.",
+    );
     lastScanTime = nowMs;
     return;
   }
@@ -402,77 +443,99 @@ async function recordScan(text) {
     );
   } catch (e) {
     lastScanTime = 0;
-    showResult("error", "Не удалось сохранить отметку", "Проверьте интернет и отсканируйте код ещё раз.");
+    showResult(
+      "error",
+      "Не удалось сохранить отметку",
+      "Проверьте интернет и отсканируйте код ещё раз.",
+    );
   }
 }
 
 function showResult(state, title, message) {
-  const icons = { pending: "…", success: "✓", error: "!" };
-  scanResult.dataset.state = state;
-  document.getElementById("result-icon").textContent = icons[state];
-  document.getElementById("result-title").textContent = title;
-  document.getElementById("result-text").textContent = message;
+  const { icon, action } = scanStates[state];
+  scanSheet.dataset.state = state;
+  scanIcon.setAttribute("href", `#scan-icon-${icon}`);
+  scanTitle.textContent = title;
+  scanMessage.textContent = message;
+  scanAction.textContent = action || "";
+  scanAction.classList.toggle("hidden", !action);
+  scanAction.disabled = scanInProgress;
 }
-
-scanResult.addEventListener("cancel", (event) => {
-  if (scanResultClose.disabled) event.preventDefault();
-});
 
 /* ================= КАМЕРА ================= */
-let scanner = null;
-let scannerReady = null;
-const scanReader = document.getElementById("reader");
-const cameraStatus = document.getElementById("cam-status");
-
-scanStart.addEventListener("click", startScanner);
-
 async function startScanner() {
-  if (scanner || scanResult.open) return;
+  if (camera?.stopping) await camera.stopping;
+  if (!scanSheet.open || camera || scanInProgress) return;
+  if (!currentUser()) {
+    showResult(
+      "login",
+      "Сначала войдите в профиль",
+      "Войдите в свой аккаунт, чтобы отметить вход или выход.",
+    );
+    return;
+  }
   if (typeof Html5Qrcode === "undefined") {
-    cameraStatus.textContent = "Модуль камеры не загружен. Обновите страницу.";
+    showResult(
+      "error",
+      "Камера недоступна",
+      "Модуль сканера не загрузился. Обновите страницу.",
+    );
     return;
   }
 
-  cameraStatus.textContent = "Включаем камеру…";
-  scanStart.classList.add("hidden");
-  scanReader.classList.remove("hidden");
+  showResult("camera", "Отсканируйте QR-код", "Включаем камеру…");
+  let stream;
   try {
-    scanner = new Html5Qrcode("reader");
-    scannerReady = scanner.start(
+    stream = { instance: new Html5Qrcode("reader") };
+    camera = stream;
+    stream.ready = stream.instance.start(
       { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 220, height: 220 } },
-      handleScan,
+      { fps: 10 },
+      (code) => {
+        if (camera === stream && !stream.stopping) handleScan(code);
+      },
       () => {},
     );
-    await scannerReady;
-    cameraStatus.textContent = "Камера активна. Наведите её на QR-код.";
-  } catch (e) {
-    scanner = null;
-    scannerReady = null;
-    scanReader.classList.add("hidden");
-    scanStart.classList.remove("hidden");
-    cameraStatus.textContent = "Не удалось включить камеру. Проверьте разрешение в браузере.";
+    await stream.ready;
+    if (!stream.stopping && scanSheet.open) {
+      showResult(
+        "camera",
+        "Отсканируйте QR-код",
+        "Наведите камеру на код у двери.",
+      );
+    }
+  } catch {
+    if (stream?.stopping) return;
+    camera = null;
+    scanReader.replaceChildren();
+    if (scanSheet.open) {
+      showResult(
+        "error",
+        "Не удалось включить камеру",
+        "Проверьте разрешение на доступ к камере в браузере.",
+      );
+    }
   }
 }
 
-async function stopScanner() {
-  const activeScanner = scanner;
-  if (!activeScanner) return;
-
-  try {
-    await scannerReady;
-    await activeScanner.stop();
-  } catch (e) {
-    cameraStatus.textContent = "Не удалось остановить камеру.";
-    return;
+function stopScanner() {
+  const stream = camera;
+  if (!stream) return;
+  if (!stream.stopping) {
+    stream.stopping = (async () => {
+      try {
+        await stream.ready;
+        await stream.instance.stop();
+      } catch {
+        const videoStream = scanReader.querySelector("video")?.srcObject;
+        videoStream?.getTracks().forEach((track) => track.stop());
+      } finally {
+        camera = null;
+        scanReader.replaceChildren();
+      }
+    })();
   }
-
-  scanner = null;
-  scannerReady = null;
-  scanReader.replaceChildren();
-  scanReader.classList.add("hidden");
-  scanStart.classList.remove("hidden");
-  cameraStatus.textContent = "Камера выключена.";
+  return stream.stopping;
 }
 
 /* ================= АДМИН-ПАНЕЛЬ ================= */
@@ -494,8 +557,7 @@ function tryAdminUnlock() {
     document.getElementById("admin-lock").classList.add("hidden");
     document.getElementById("admin-content").classList.remove("hidden");
 
-    // Скрываем сканер для админа
-    document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
+    updateAuthUI();
 
     msg.textContent = "";
     renderTable();
@@ -514,9 +576,6 @@ document.getElementById("admin-lock-btn").addEventListener("click", () => {
   document.getElementById("admin-lock").classList.remove("hidden");
   document.getElementById("admin-content").classList.add("hidden");
 
-  // Возвращаем сканер при выходе из админки
-  document.querySelector('.tab[data-tab="scan"]').classList.remove("hidden");
-
   switchTab("auth");
 });
 
@@ -524,7 +583,6 @@ if (adminOpen) {
   document.getElementById("admin-tab").classList.remove("hidden");
   document.getElementById("admin-lock").classList.add("hidden");
   document.getElementById("admin-content").classList.remove("hidden");
-  document.querySelector('.tab[data-tab="scan"]').classList.add("hidden");
 }
 
 /* ================= ОБЪЯВЛЕНИЯ ================= */
@@ -632,20 +690,57 @@ function renderTable() {
   if (!adminOpen) return;
   const tbody = document.querySelector("#log-table tbody");
   const dateFilter = document.getElementById("filter-date").value;
-  const rows = Attendance.buildRows(logsCache, employeesCache).filter(row => !dateFilter || row.date === dateFilter);
+  const rows = Attendance.buildRows(logsCache, employeesCache).filter(
+    (row) => !dateFilter || row.date === dateFilter,
+  );
   tbody.innerHTML = "";
-  document.getElementById("empty-msg").style.display = rows.length ? "none" : "block";
-  const lateCount = rows.filter(row => row.late > 0).length;
-  const earlyCount = rows.filter(row => row.early > 0).length;
-  document.getElementById("attendance-summary").innerHTML = '<span>Посещений <b>' + rows.length + '</b></span><span>С опозданием <b>' + lateCount + '</b></span><span>С ранним уходом <b>' + earlyCount + '</b></span>';
-  rows.forEach(row => {
+  document.getElementById("empty-msg").style.display = rows.length
+    ? "none"
+    : "block";
+  const lateCount = rows.filter((row) => row.late > 0).length;
+  const earlyCount = rows.filter((row) => row.early > 0).length;
+  document.getElementById("attendance-summary").innerHTML =
+    "<span>Посещений <b>" +
+    rows.length +
+    "</b></span><span>С опозданием <b>" +
+    lateCount +
+    "</b></span><span>С ранним уходом <b>" +
+    earlyCount +
+    "</b></span>";
+  rows.forEach((row) => {
     const tr = document.createElement("tr");
-    const notes = Attendance.notes(row).map(note => {
-      const tone = note.startsWith('Опоздал') ? 'late' : note.startsWith('Ранний') ? 'early' : note === 'По графику' ? 'ok' : 'neutral';
-      return '<span class="attendance-note ' + tone + '">' + esc(note) + '</span>';
-    }).join('');
-    const exit = row.exit ? esc(row.exit.time) + (row.exit.date !== row.date ? '<small class="next-day">' + esc(row.exit.date) + '</small>' : '') : '<span class="muted">—</span>';
-    tr.innerHTML = '<td class="attendance-date">' + esc(row.date) + '</td><td><b>' + esc(row.name) + '</b></td><td class="attendance-time">' + (row.entry ? esc(row.entry.time) : '—') + '</td><td class="attendance-time">' + exit + '</td><td><div class="attendance-notes">' + notes + '</div></td>';
+    const notes = Attendance.notes(row)
+      .map((note) => {
+        const tone = note.startsWith("Опоздал")
+          ? "late"
+          : note.startsWith("Ранний")
+            ? "early"
+            : note === "По графику"
+              ? "ok"
+              : "neutral";
+        return (
+          '<span class="attendance-note ' + tone + '">' + esc(note) + "</span>"
+        );
+      })
+      .join("");
+    const exit = row.exit
+      ? esc(row.exit.time) +
+        (row.exit.date !== row.date
+          ? '<small class="next-day">' + esc(row.exit.date) + "</small>"
+          : "")
+      : '<span class="muted">—</span>';
+    tr.innerHTML =
+      '<td class="attendance-date">' +
+      esc(row.date) +
+      "</td><td><b>" +
+      esc(row.name) +
+      '</b></td><td class="attendance-time">' +
+      (row.entry ? esc(row.entry.time) : "—") +
+      '</td><td class="attendance-time">' +
+      exit +
+      '</td><td><div class="attendance-notes">' +
+      notes +
+      "</div></td>";
     tbody.appendChild(tr);
   });
 }
@@ -672,13 +767,27 @@ function renderEmployees() {
       : '<span class="badge out">Вне кухни</span>';
     const timeData = calculateEmployeeHours(e.name, todayStr);
 
-    const schedule = Attendance.scheduleFor(e, todayStr);
+    const { weekdays, sunday, sundayOff } = Attendance.weeklyScheduleFor(
+      e,
+      todayStr,
+    );
+    const weekdayHours = weekdays
+      ? `${weekdays.start} — ${weekdays.end}`
+      : "Не задано";
+    const sundayHours = sunday
+      ? `${sunday.start} — ${sunday.end}`
+      : sundayOff
+        ? "Выходной"
+        : "Не задано";
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><b>${esc(e.name)}</b></td>
       <td>${statusHtml}</td>
       <td><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
-      <td><span class="employee-schedule">${schedule ? esc(schedule.start) + " — " + esc(schedule.end) : "Не задан"}</span></td>
+      <td><div class="employee-schedule">
+        <span><small>Пн–Пт</small> ${esc(weekdayHours)}</span>
+        <span><small>Вс</small> ${esc(sundayHours)}</span>
+      </div></td>
       <td><div class="employee-actions"><button class="btn primary sm schedule-btn" data-id="${esc(e.id)}">График</button><button class="btn danger sm del-emp-btn" data-id="${esc(e.id)}" data-name="${esc(e.name)}">Удалить</button></div></td>
     `;
     tbody.appendChild(tr);
@@ -711,7 +820,6 @@ function updateAdminEmployeeSelects() {
       selectUser.appendChild(opt);
     });
   }
-
 }
 
 function renderAdminUserHistory() {
@@ -805,11 +913,29 @@ document.getElementById("export-csv").addEventListener("click", () => {
     return;
   }
 
-  const rows = [["Дата", "Сотрудник", "Время входа", "Время выхода", "Дата выхода", "Отметки"]];
+  const rows = [
+    [
+      "Дата",
+      "Сотрудник",
+      "Время входа",
+      "Время выхода",
+      "Дата выхода",
+      "Отметки",
+    ],
+  ];
   const includedLogs = new Set(filteredLogs);
   Attendance.buildRows(logsCache, employeesCache)
-    .filter(row => includedLogs.has(row.entry || row.exit))
-    .forEach(row => rows.push([row.date, row.name, row.entry?.time || "", row.exit?.time || "", row.exit?.date || "", Attendance.notes(row).join("; ")]));
+    .filter((row) => includedLogs.has(row.entry || row.exit))
+    .forEach((row) =>
+      rows.push([
+        row.date,
+        row.name,
+        row.entry?.time || "",
+        row.exit?.time || "",
+        row.exit?.date || "",
+        Attendance.notes(row).join("; "),
+      ]),
+    );
 
   const csv =
     "\uFEFF" + rows.map((r) => r.map((c) => `"${c}"`).join(";")).join("\n");
