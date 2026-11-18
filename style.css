@@ -79,50 +79,53 @@ body { background: var(--bg-color); color: var(--text-main); min-height: 100vh; 
 
 /* Нижняя кнопка и панель QR-сканера */
 .scan-symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+:root { --scan-wave-height: 76px; }
 .scan-dock, .scan-sheet { --scan-blue: #245bc2; }
 .scan-dock {
   position: fixed;
   inset: auto 0 0;
   z-index: 95;
   width: min(100%, 460px);
-  height: calc(68px + env(safe-area-inset-bottom, 0px));
+  height: calc(var(--scan-wave-height) + env(safe-area-inset-bottom, 0px));
   margin-inline: auto;
   text-align: center;
   pointer-events: none;
 }
 .scan-dock::after {
   position: absolute;
-  inset: 67px 0 0;
+  inset: calc(var(--scan-wave-height) - 1px) 0 0;
   background: var(--scan-blue);
   content: "";
 }
-body:has(.scan-dock:not(.hidden)) { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+body:has(.scan-dock:not(.hidden)) { padding-bottom: calc(var(--scan-wave-height) + env(safe-area-inset-bottom, 0px)); }
 body:has(.scan-dock.hidden) .scan-profile-hint { display: none; }
 body:has(.scan-sheet[open]) { overflow: hidden; }
 .scan-wave {
   position: absolute;
   inset: 0 auto auto 0;
   width: 100%;
-  height: 68px;
-  color: var(--scan-blue);
+  height: var(--scan-wave-height);
   pointer-events: none;
 }
 .scan-launch {
   position: relative;
   display: grid;
   place-items: center;
-  width: 68px;
-  height: 58px;
-  margin: 7px auto 0;
-  border: 0;
+  width: 54px;
+  height: 54px;
+  margin: 12px auto 0;
+  border: 1px solid #ffffff40;
   border-radius: 50%;
-  background: transparent;
+  background: #ffffff1c;
+  box-shadow: 0 4px 14px #112e7130, inset 0 1px 0 #ffffff20;
   color: #fff;
   cursor: pointer;
   pointer-events: auto;
-  transition: transform .15s ease-out;
+  transition: transform .15s ease-out, background .15s ease-out;
 }
+.scan-launch:hover { background: #ffffff2e; }
 .scan-launch:active { transform: scale(.91); }
+.scan-launch .scan-icon { width: 29px; height: 29px; }
 .scan-icon {
   width: 34px;
   height: 34px;
@@ -159,8 +162,8 @@ body:has(.scan-sheet[open]) { overflow: hidden; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
-.scan-sheet-top { position: relative; height: 66px; }
-.scan-state-icon { position: relative; top: 18px; }
+.scan-sheet-top { position: relative; height: var(--scan-wave-height); }
+.scan-state-icon { position: relative; top: 22px; }
 .scan-sheet[data-state="success"] .scan-state-icon {
   color: #baf5ce;
   stroke-width: 3;
