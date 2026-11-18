@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Кухня исакеева — Учёт посещений</title>
-  <link rel="stylesheet" href="style.css?v=weekly-schedule">
+  <link rel="stylesheet" href="style.css?v=scan-wave">
   <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=3">
   <meta name="theme-color" content="#2563eb">
   <base target="_blank">
@@ -190,8 +190,14 @@
 </main>
 
 <svg class="scan-symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-  <symbol id="scan-wave" viewBox="0 0 400 68" preserveAspectRatio="none">
-    <path fill="currentColor" d="M0 51C64 56 124 52 157 39C175 32 166 4 200 4C234 4 225 32 243 39C276 52 336 56 400 51V68H0Z"/>
+  <defs>
+    <linearGradient id="scan-wave-fill" x2="0" y2="1">
+      <stop stop-color="#3678ea"/>
+      <stop offset="85%" stop-color="#245bc2"/>
+    </linearGradient>
+  </defs>
+  <symbol id="scan-wave" viewBox="0 0 400 76" preserveAspectRatio="none">
+    <path fill="url(#scan-wave-fill)" d="M0 54H103C131 54 147 49 160 36C173 23 175 7 200 7C225 7 227 23 240 36C253 49 269 54 297 54H400V76H0Z"/>
   </symbol>
   <symbol id="scan-icon-qr" viewBox="0 0 32 32">
     <path d="M3 10V5a2 2 0 0 1 2-2h5m12 0h5a2 2 0 0 1 2 2v5m0 12v5a2 2 0 0 1-2 2h-5m-12 0H5a2 2 0 0 1-2-2v-5"/>
