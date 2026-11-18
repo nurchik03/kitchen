@@ -19,6 +19,7 @@ const ADMIN_PASS = "admin123";
 
 const LS_SESSION = "kitchen_session_v1";
 const SS_ADMIN = "kitchen_admin_open_v1";
+const SS_ACTIVE_TAB = "kitchen_active_tab_v1";
 const COOLDOWN_MS = 8000;
 
 let employeesCache = [];
@@ -136,14 +137,15 @@ db.collection("announcements")
 
 /* ================= НАВИГАЦИЯ ================= */
 function switchTab(id) {
-  if (id === "admin") {
-    document
-      .querySelectorAll(".tab")
-      .forEach((b) => b.classList.toggle("active", b.dataset.tab === "admin"));
-    document
-      .querySelectorAll(".page")
-      .forEach((p) => p.classList.toggle("active", p.id === "admin"));
+  sessionStorage.setItem(SS_ACTIVE_TAB, id);
+  document
+    .querySelectorAll(".tab")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
+  document
+    .querySelectorAll(".page")
+    .forEach((p) => p.classList.toggle("active", p.id === id));
 
+  if (id === "admin") {
     if (adminOpen) {
       document.getElementById("admin-lock").classList.add("hidden");
       document.getElementById("admin-content").classList.remove("hidden");
@@ -157,13 +159,6 @@ function switchTab(id) {
     }
     return;
   }
-
-  document
-    .querySelectorAll(".tab")
-    .forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
-  document
-    .querySelectorAll(".page")
-    .forEach((p) => p.classList.toggle("active", p.id === id));
 
   updateAuthUI();
 }
@@ -579,12 +574,6 @@ document.getElementById("admin-lock-btn").addEventListener("click", () => {
   switchTab("auth");
 });
 
-if (adminOpen) {
-  document.getElementById("admin-tab").classList.remove("hidden");
-  document.getElementById("admin-lock").classList.add("hidden");
-  document.getElementById("admin-content").classList.remove("hidden");
-}
-
 /* ================= ОБЪЯВЛЕНИЯ ================= */
 function renderAnnouncements() {
   const container = document.getElementById("announcements-feed");
@@ -753,7 +742,7 @@ function renderEmployees() {
 
   if (employeesCache.length === 0) {
     tbody.innerHTML =
-      '<tr><td colspan="5" class="muted" style="text-align:center;">Пока никто не зарегистрирован.</td></tr>';
+      '<tr role="row"><td role="cell" colspan="5" class="muted employee-empty">Пока никто не зарегистрирован.</td></tr>';
     return;
   }
 
@@ -780,15 +769,19 @@ function renderEmployees() {
         ? "Выходной"
         : "Не задано";
     const tr = document.createElement("tr");
+    tr.setAttribute("role", "row");
     tr.innerHTML = `
-      <td><b>${esc(e.name)}</b></td>
-      <td>${statusHtml}</td>
-      <td><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
-      <td><div class="employee-schedule">
-        <span><small>Пн–Пт</small> ${esc(weekdayHours)}</span>
-        <span><small>Вс</small> ${esc(sundayHours)}</span>
-      </div></td>
-      <td><div class="employee-actions"><button class="btn primary sm schedule-btn" data-id="${esc(e.id)}">График</button><button class="btn danger sm del-emp-btn" data-id="${esc(e.id)}" data-name="${esc(e.name)}">Удалить</button></div></td>
+      <td role="cell" class="employee-name"><b>${esc(e.name)}</b></td>
+      <td role="cell"><span class="employee-mobile-label" aria-hidden="true">Статус</span>${statusHtml}</td>
+      <td role="cell"><span class="employee-mobile-label" aria-hidden="true">Часы сегодня</span><b>${timeData.hours} ч. ${timeData.minutes} мин.</b></td>
+      <td role="cell" class="employee-shifts">
+        <span class="employee-mobile-label" aria-hidden="true">Рабочий график</span>
+        <div class="employee-schedule">
+          <span><small>Пн–Пт</small> ${esc(weekdayHours)}</span>
+          <span><small>Вс</small> ${esc(sundayHours)}</span>
+        </div>
+      </td>
+      <td role="cell" class="employee-commands"><div class="employee-actions"><button class="btn primary sm schedule-btn" data-id="${esc(e.id)}">График</button><button class="btn danger sm del-emp-btn" data-id="${esc(e.id)}" data-name="${esc(e.name)}">Удалить</button></div></td>
     `;
     tbody.appendChild(tr);
   });
@@ -999,3 +992,9 @@ function buildDoorQr() {
 }
 
 buildDoorQr();
+
+if (adminOpen) {
+  document.getElementById("admin-tab").classList.remove("hidden");
+  const lastTab = sessionStorage.getItem(SS_ACTIVE_TAB);
+  switchTab(lastTab === "auth" ? "auth" : "admin");
+}
